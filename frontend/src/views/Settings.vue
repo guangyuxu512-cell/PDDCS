@@ -1,25 +1,170 @@
 <template>
-  <section class="placeholder-page">
-    <h3>系统设置</h3>
-    <p>预留系统配置、通知渠道和全局开关管理区域。</p>
+  <section class="settings">
+    <el-skeleton :loading="loading" animated>
+      <template #template>
+        <el-skeleton-item style="width: 100%; height: 360px" variant="p" />
+      </template>
+
+      <el-form class="settings__form" label-position="top">
+        <el-divider content-position="left">全局 LLM 配置</el-divider>
+        <div class="settings__grid">
+          <el-form-item label="API Base URL">
+            <el-input v-model="formState.apiBaseUrl" />
+          </el-form-item>
+          <el-form-item label="API Key">
+            <el-input v-model="formState.apiKey" show-password />
+          </el-form-item>
+          <el-form-item label="默认模型名称">
+            <el-input v-model="formState.defaultModel" />
+          </el-form-item>
+          <el-form-item label="Temperature">
+            <el-input-number v-model="formState.temperature" :max="2" :min="0" :step="0.1" />
+          </el-form-item>
+          <el-form-item label="最大 Token">
+            <el-input-number v-model="formState.maxTokens" :min="1" />
+          </el-form-item>
+        </div>
+
+        <el-divider content-position="left">全局转人工默认规则</el-divider>
+        <div class="settings__grid">
+          <el-form-item class="settings__full" label="默认兜底话术">
+            <el-input v-model="formState.defaultFallbackMsg" :rows="3" type="textarea" />
+          </el-form-item>
+          <el-form-item class="settings__full" label="默认关键词列表">
+            <el-input v-model="defaultKeywordsText" :rows="5" type="textarea" />
+          </el-form-item>
+          <p class="settings__hint">新店铺创建时将自动继承这些默认规则</p>
+        </div>
+
+        <el-divider content-position="left">系统配置</el-divider>
+        <div class="settings__grid">
+          <el-form-item label="日志级别">
+            <el-select v-model="formState.logLevel">
+              <el-option v-for="level in logLevels" :key="level" :label="level" :value="level" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="会话历史保留天数">
+            <el-input-number v-model="formState.historyRetentionDays" :min="1" />
+          </el-form-item>
+          <el-form-item class="settings__full" label="告警 Webhook URL">
+            <el-input v-model="formState.alertWebhookUrl" />
+          </el-form-item>
+          <el-form-item label="单机最大店铺数">
+            <el-input-number v-model="formState.maxShops" :min="1" />
+          </el-form-item>
+        </div>
+
+        <div class="settings__footer">
+          <el-button :loading="saving" type="primary" @click="handleSave">保存</el-button>
+        </div>
+      </el-form>
+    </el-skeleton>
   </section>
 </template>
 
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { onMounted, ref } from 'vue';
+
+import { fetchSettings, saveSettings } from '@/api/settings';
+import type { LogLevel, SystemSettings } from '@/types/settings';
+
+const loading = ref(true);
+const saving = ref(false);
+const defaultKeywordsText = ref('');
+const formState = ref<SystemSettings>({
+  apiBaseUrl: '',
+  apiKey: '',
+  defaultModel: '',
+  temperature: 0.7,
+  maxTokens: 200,
+  defaultFallbackMsg: '',
+  defaultKeywords: [],
+  logLevel: 'INFO',
+  historyRetentionDays: 30,
+  alertWebhookUrl: '',
+  maxShops: 10,
+});
+
+const logLevels: LogLevel[] = ['DEBUG', 'INFO', 'WARNING', 'ERROR'];
+
+onMounted(async () => {
+  try {
+    const settings = await fetchSettings();
+    formState.value = settings;
+    defaultKeywordsText.value = settings.defaultKeywords.join('\n');
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '系统设置加载失败');
+  } finally {
+    loading.value = false;
+  }
+});
+
+async function handleSave(): Promise<void> {
+  saving.value = true;
+  try {
+    const payload: SystemSettings = {
+      ...formState.value,
+      defaultKeywords: defaultKeywordsText.value
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean),
+    };
+    const saved = await saveSettings(payload);
+    formState.value = saved;
+    defaultKeywordsText.value = saved.defaultKeywords.join('\n');
+    ElMessage.success('系统设置已保存');
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '系统设置保存失败');
+  } finally {
+    saving.value = false;
+  }
+}
+</script>
+
 <style scoped>
-.placeholder-page {
-  min-height: 280px;
+.settings {
   padding: 24px;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.82);
   border: 1px solid rgba(99, 123, 160, 0.18);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 18px 48px rgba(17, 38, 66, 0.08);
 }
 
-.placeholder-page h3 {
-  margin-top: 0;
+.settings__form {
+  display: grid;
+  gap: 12px;
 }
 
-.placeholder-page p {
-  color: #566d87;
+.settings__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.settings__full,
+.settings__hint {
+  grid-column: 1 / -1;
+}
+
+.settings__hint {
+  margin: 0;
+  color: #677a92;
+  font-size: 14px;
+}
+
+.settings__footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 860px) {
+  .settings {
+    padding: 18px 16px;
+  }
+
+  .settings__grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

@@ -64,3 +64,49 @@ async def read_latest_messages(self, count: int = 20) -> list[StandardMessage]:
 - 拼多多页面在**微前端子上下文**中，Playwright evaluate 默认在 `top` 执行，如果选择器找不到元素，需要切换到正确的 `frame`
 - 去重用 `index` 属性 + 文本内容做复合 key
 - 弹窗扫描器：定时检查并关闭拼多多常见弹窗（选择器也在 yaml 配置）
+
+## 4.4 消息去重
+
+拼多多轮询在生产环境必须做**处理前去重**，避免 DOM 重绘、页面回流或轮询间隔抖动导致同一条消息被重复消费。
+
+### 唯一 ID 生成规则
+
+- 每条抓取到的消息基于 `(shop_id + buyer_id + message_text + timestamp_10s_bucket)` 生成 SHA256 hash
+- `timestamp_10s_bucket` 指按 10 秒分桶后的时间戳，用于吸收同一条消息在短时间内被重复抓到的抖动
+- 该 hash 作为消息唯一 ID，进入后续队列、LLM、发送链路前先做存在性检查
+
+### Redis 去重策略
+
+- 使用 Redis `SET` 存储已处理消息 ID
+- key 建议按店铺隔离，例如 `cs:dedupe:{shop_id}`
+- 每条消息 ID 写入后设置 TTL 为 600 秒
+- 轮询时先检查 Redis 中是否已存在该 ID，存在则直接跳过，不再进入处理链路
+
+### 参考实现
+
+```python
+import hashlib
+
+
+def 生成消息唯一ID(shop_id: str, buyer_id: str, message_text: str, timestamp_ms: int) -> str:
+    timestamp_10s_bucket = timestamp_ms // 10_000
+    raw = f"{shop_id}:{buyer_id}:{message_text}:{timestamp_10s_bucket}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def 应处理消息(redis_client: Redis, shop_id: str, message_id: str) -> bool:
+    redis_key = f"cs:dedupe:{shop_id}"
+    exists = await redis_client.sismember(redis_key, message_id)
+    if exists:
+        return False
+
+    await redis_client.sadd(redis_key, message_id)
+    await redis_client.expire(redis_key, 600)
+    return True
+```
+
+### 规则
+
+- 去重检查必须发生在消息进入业务处理链路之前
+- Redis 去重命中时要记录 debug 日志，便于排查页面抖动和重复轮询
+- 所有平台适配器都必须复用同一套 Redis 去重策略，不能只在拼多多适配器里做临时实现

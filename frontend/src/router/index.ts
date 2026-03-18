@@ -4,7 +4,6 @@ import {
   Document,
   Setting,
   Shop,
-  Bell,
 } from '@element-plus/icons-vue';
 import type { Component } from 'vue';
 import {
@@ -18,7 +17,6 @@ export const routeIconMap = {
   Shop,
   ChatDotRound,
   Document,
-  Bell,
   Setting,
 } as const;
 
@@ -56,11 +54,6 @@ export const routes: RouteRecordRaw[] = [
     path: '/knowledge',
     component: () => import('@/views/KnowledgeBase.vue'),
     meta: { title: '知识库', icon: 'Document' },
-  },
-  {
-    path: '/escalation',
-    component: () => import('@/views/EscalationQueue.vue'),
-    meta: { title: '人工转接', icon: 'Bell' },
   },
   {
     path: '/settings',

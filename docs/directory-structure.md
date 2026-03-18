@@ -85,15 +85,24 @@ project/
 │   ├── .env.production
 │   └── src/
 │       ├── api/                   # API 封装层
+│       │   ├── dashboard.ts       # 总览数据 API
+│       │   ├── shop.ts            # 店铺列表与状态 API
+│       │   └── shopConfig.ts      # 店铺配置 API
+│       ├── types/                 # 前端业务类型
+│       │   ├── api.ts             # 通用响应类型
+│       │   ├── dashboard.ts       # 总览类型
+│       │   ├── shop.ts            # 店铺类型
+│       │   └── shopConfig.ts      # 店铺配置类型
 │       ├── views/
 │       │   ├── Dashboard.vue
 │       │   ├── ShopManage.vue
+│       │   ├── ShopEdit.vue
 │       │   ├── ChatMonitor.vue
 │       │   ├── KnowledgeBase.vue
-│       │   ├── EscalationQueue.vue
 │       │   └── Settings.vue
 │       ├── components/
 │       │   ├── ShopCard.vue
+│       │   ├── ShopEditDialog.vue
 │       │   ├── MarkdownEditor.vue
 │       │   └── ChatBubble.vue
 │       └── utils/

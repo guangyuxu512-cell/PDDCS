@@ -1,9 +1,8 @@
 <template>
   <aside class="sidebar">
     <div class="sidebar__brand">
-      <p class="sidebar__eyebrow">Customer Service OS</p>
       <h1>多平台智能客服</h1>
-      <span>前端控制台骨架</span>
+      <span>RPA 自动化客服系统</span>
     </div>
 
     <el-menu
@@ -87,17 +86,9 @@ async function handleSelect(path: string): Promise<void> {
   line-height: 1.1;
 }
 
-.sidebar__brand span,
-.sidebar__eyebrow {
+.sidebar__brand span {
   display: block;
   color: rgba(220, 230, 245, 0.78);
-}
-
-.sidebar__eyebrow {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 .sidebar__menu {

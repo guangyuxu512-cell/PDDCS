@@ -23,23 +23,66 @@
 - SQLite WAL 模式（并发读写性能）
 - Playwright Page 定期 `page.reload()` 防止内存泄漏（每 4 小时）
 
-## 9.4 优雅启停
+## 9.4 发送频率限制
+
+- 每条 AI 回复发送前必须增加 random delay，默认范围 2-5 秒，模拟人工打字速度
+- delay 范围不能写死，必须从 `config/platforms.yaml` 读取 `reply_delay_min_ms` 与 `reply_delay_max_ms`
+- 同一店铺同一时刻只允许一个发送操作，使用 `asyncio.Lock` per shop 串行化发送链路
+- random delay 应发生在最终发送前，避免多个协程提前 sleep 后同时出队
 
 ```python
-# backend/main.py lifespan
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 启动
-    await redis_pool.connect()
-    await engine_manager.start()
-    yield
-    # 关闭
-    await scheduler.stop_all()       # 等待所有协程结束
-    await engine_manager.close_all() # 关闭所有浏览器
-    await redis_pool.disconnect()
+# services/cs_scheduler.py
+shop_send_lock = self._shop_send_locks[shop_id]
+delay_min = platform_config["reply_delay_min_ms"]
+delay_max = platform_config["reply_delay_max_ms"]
+
+async with shop_send_lock:
+    delay_ms = random.randint(delay_min, delay_max)
+    await asyncio.wait_for(asyncio.sleep(delay_ms / 1000), timeout=(delay_max / 1000) + 1)
+    await asyncio.wait_for(adapter.send_text(reply_text), timeout=15)
 ```
 
-## 9.5 日志规范
+## 9.5 优雅启停
+
+```python
+# backend/main.py / services/cs_scheduler.py
+loop = asyncio.get_running_loop()
+loop.add_signal_handler(signal.SIGTERM, scheduler.request_shutdown)
+loop.add_signal_handler(signal.SIGINT, scheduler.request_shutdown)
+```
+
+- 必须注册 `SIGTERM` / `SIGINT` 信号处理
+- 收到信号后按顺序执行：
+  1. 设置 shutdown flag
+  2. 各店铺协程停止接收新消息
+  3. 等待当前处理中的消息完成，最长 30 秒超时
+  4. 关闭所有 `BrowserContext`
+  5. 关闭 `Browser`
+  6. 关闭 Redis 连接
+  7. 正常退出
+- 若 30 秒超时仍有消息未完成，必须强制退出，并在日志中记录未完成的消息 ID
+- 优雅停机期间不得再派发新的 LLM 请求和发送动作
+
+## 9.6 监控告警
+
+- `health_monitor` 每 60 秒检查一次：
+  - 各店铺 `BrowserContext` 是否存活
+  - Cookie 是否有效
+  - Redis 是否可达
+  - 最近 5 分钟是否有消息处理
+- 异常时通过 webhook 推送通知，webhook URL 从 `.env` 的 `ALERT_WEBHOOK_URL` 读取
+- 连续 3 次健康检查失败才告警，避免瞬时抖动和误报
+- 告警内容至少包含 `shop_id`、异常类型、失败次数、最近一条消息时间和恢复建议
+
+## 9.7 并发边界
+
+- 单机最大店铺数默认 10，通过 `.env` 中的 `MAX_SHOPS` 配置
+- 超过上限时拒绝启动新店铺，API 返回错误码 `1001`
+- 每店铺内存预估：`1 BrowserContext ≈ 150-300MB`
+- 10 店铺场景建议预留 `3-4GB RAM`，同时为 Redis、FastAPI 和桌面自动化进程保留额外余量
+- 当店铺数接近上限时，应优先告警而不是继续扩容单进程负载
+
+## 9.8 日志规范
 
 ```python
 # 格式：[时间] [级别] [shop_id] [模块] 消息
@@ -52,7 +95,7 @@ logger.error(f"[{shop_id}] [llm] LLM 调用失败: {error}", exc_info=True)
 - 开发环境：`DEBUG`，仅 stdout
 - 敏感信息（API Key、Cookie）禁止出现在日志中
 
-## 9.6 安全规则
+## 9.9 安全规则
 
 - `.env` 文件**必须**在 `.gitignore` 中
 - API Key 在日志中显示为 `sk-***xxx`（只露最后 3 位）
