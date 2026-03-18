@@ -6,6 +6,10 @@ export async function fetchKnowledgeTree(): Promise<KnowledgeTreeNode[]> {
   return unwrapResponse(request.get<ApiResponse<KnowledgeTreeNode[]>>('/knowledge/tree'));
 }
 
+export async function fetchKnowledgeFileList(): Promise<string[]> {
+  return unwrapResponse(request.get<ApiResponse<string[]>>('/knowledge/files'));
+}
+
 export async function fetchKnowledgeDocument(path: string): Promise<KnowledgeDocument> {
   return unwrapResponse(
     request.get<ApiResponse<KnowledgeDocument>>('/knowledge/document', {

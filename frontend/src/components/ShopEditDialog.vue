@@ -23,6 +23,18 @@
                 />
               </el-select>
             </label>
+            <label class="shop-edit-dialog__field">
+              <span>店铺账号</span>
+              <el-input v-model="formState.username" placeholder="请输入店铺登录账号" />
+            </label>
+            <label class="shop-edit-dialog__field">
+              <span>店铺密码</span>
+              <el-input
+                v-model="formState.password"
+                placeholder="请输入店铺登录密码"
+                show-password
+              />
+            </label>
             <div class="shop-edit-dialog__field shop-edit-dialog__field--full">
               <span>Cookie 状态</span>
               <div class="shop-edit-dialog__cookie">
@@ -56,6 +68,17 @@
               <span>自定义模型名称</span>
               <el-input v-model="formState.customModel" placeholder="请输入模型名称" />
             </label>
+            <div v-if="formState.llmMode === 'custom'" class="shop-edit-dialog__field">
+              <span>连接测试</span>
+              <el-button
+                :loading="testingCustomConnection"
+                plain
+                type="success"
+                @click="handleTestCustomConnection"
+              >
+                测试连接
+              </el-button>
+            </div>
             <label class="shop-edit-dialog__field shop-edit-dialog__field--full">
               <span>回复风格备注</span>
               <el-input
@@ -65,6 +88,33 @@
                 type="textarea"
               />
             </label>
+          </div>
+        </el-collapse-item>
+
+        <el-collapse-item name="knowledge" title="知识库绑定">
+          <div class="shop-edit-dialog__grid">
+            <div class="shop-edit-dialog__field shop-edit-dialog__field--full">
+              <span>绑定知识库文件</span>
+              <el-skeleton :loading="knowledgeLoading" animated>
+                <template #template>
+                  <el-skeleton-item style="width: 100%; height: 90px" variant="p" />
+                </template>
+                <el-checkbox-group v-model="formState.knowledgePaths" class="shop-edit-dialog__knowledge-list">
+                  <el-checkbox
+                    v-for="path in knowledgeFileOptions"
+                    :key="path"
+                    :label="path"
+                    :value="path"
+                  >
+                    {{ path }}
+                  </el-checkbox>
+                </el-checkbox-group>
+              </el-skeleton>
+            </div>
+            <div class="shop-edit-dialog__field shop-edit-dialog__field--full">
+              <span>知识库使用策略</span>
+              <el-checkbox v-model="formState.useGlobalKnowledge">同时使用全局知识库</el-checkbox>
+            </div>
           </div>
         </el-collapse-item>
 
@@ -119,6 +169,8 @@
 import { ElMessage } from 'element-plus';
 import { computed, ref, watch } from 'vue';
 
+import { fetchKnowledgeFileList } from '@/api/knowledge';
+import { testLlmConnection } from '@/api/settings';
 import { fetchShopConfig, saveShopConfig } from '@/api/shopConfig';
 import { platformLabel, type Platform } from '@/types/shop';
 import {
@@ -157,9 +209,17 @@ const rulePlaceholderMap: Record<EscalationRuleType, string> = {
   regex: '例如：退.*赔偿',
 };
 
-const activePanels = ref<Array<'basic' | 'ai' | 'escalation'>>(['basic', 'ai', 'escalation']);
+const activePanels = ref<Array<'basic' | 'ai' | 'knowledge' | 'escalation'>>([
+  'basic',
+  'ai',
+  'knowledge',
+  'escalation',
+]);
 const loading = ref(false);
 const saving = ref(false);
+const knowledgeLoading = ref(false);
+const testingCustomConnection = ref(false);
+const knowledgeFileOptions = ref<string[]>([]);
 const formState = ref<ShopConfig>(createEmptyConfig());
 
 const dialogVisible = computed({
@@ -181,12 +241,19 @@ watch(
     }
 
     loading.value = true;
+    knowledgeLoading.value = true;
     try {
-      formState.value = normalizeConfig(await fetchShopConfig(shopId));
+      const [config, knowledgeFiles] = await Promise.all([
+        fetchShopConfig(shopId),
+        fetchKnowledgeFileList(),
+      ]);
+      knowledgeFileOptions.value = knowledgeFiles;
+      formState.value = normalizeConfig(config);
     } catch (error) {
       ElMessage.error(error instanceof Error ? error.message : '店铺配置加载失败');
     } finally {
       loading.value = false;
+      knowledgeLoading.value = false;
     }
   },
 );
@@ -195,6 +262,8 @@ function createEmptyConfig(): ShopConfig {
   return {
     shopId: '',
     name: '',
+    username: '',
+    password: '',
     platform: 'pdd',
     cookieValid: false,
     cookieLastRefresh: '',
@@ -203,6 +272,8 @@ function createEmptyConfig(): ShopConfig {
     customApiKey: '',
     customModel: '',
     replyStyleNote: '',
+    knowledgePaths: [],
+    useGlobalKnowledge: true,
     humanAgentName: '',
     escalationRules: [],
     escalationFallbackMsg: '',
@@ -212,9 +283,13 @@ function createEmptyConfig(): ShopConfig {
 function normalizeConfig(config: ShopConfig): ShopConfig {
   return {
     ...config,
+    username: config.username ?? '',
+    password: config.password ?? '',
     customApiKey: config.customApiKey ?? '',
     customModel: config.customModel ?? '',
     replyStyleNote: config.replyStyleNote ?? '',
+    knowledgePaths: config.knowledgePaths ?? [],
+    useGlobalKnowledge: config.useGlobalKnowledge ?? true,
     escalationRules: config.escalationRules.length ? config.escalationRules : [createRule()],
   };
 }
@@ -235,6 +310,28 @@ function removeRule(ruleId: string): void {
   formState.value.escalationRules = formState.value.escalationRules.filter((rule) => rule.id !== ruleId);
 }
 
+async function handleTestCustomConnection(): Promise<void> {
+  if (!formState.value.customApiKey?.trim() || !formState.value.customModel?.trim()) {
+    ElMessage.error('请先填写自定义 API Key 和模型名称');
+    return;
+  }
+
+  testingCustomConnection.value = true;
+  try {
+    await testLlmConnection({
+      apiBaseUrl: '',
+      apiKey: formState.value.customApiKey.trim(),
+      model: formState.value.customModel.trim(),
+    });
+    ElMessage.success('LLM 连接测试成功，模型响应正常');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '未知错误';
+    ElMessage.error(`连接失败: ${message}`);
+  } finally {
+    testingCustomConnection.value = false;
+  }
+}
+
 async function handleSave(): Promise<void> {
   if (!props.shopId) {
     ElMessage.error('缺少店铺 ID，无法保存');
@@ -243,6 +340,16 @@ async function handleSave(): Promise<void> {
 
   if (!formState.value.name.trim()) {
     ElMessage.error('店铺名称不能为空');
+    return;
+  }
+
+  if (!formState.value.username.trim()) {
+    ElMessage.error('店铺账号不能为空');
+    return;
+  }
+
+  if (!formState.value.password.trim()) {
+    ElMessage.error('店铺密码不能为空');
     return;
   }
 
@@ -270,9 +377,14 @@ function normalizeSavePayload(config: ShopConfig): ShopConfig {
   return {
     ...config,
     shopId: props.shopId ?? config.shopId,
+    name: config.name.trim(),
+    username: config.username.trim(),
+    password: config.password.trim(),
     customApiKey: config.llmMode === 'custom' ? config.customApiKey?.trim() ?? '' : undefined,
     customModel: config.llmMode === 'custom' ? config.customModel?.trim() ?? '' : undefined,
     replyStyleNote: config.replyStyleNote?.trim() ?? '',
+    knowledgePaths: config.knowledgePaths.filter(Boolean),
+    useGlobalKnowledge: config.useGlobalKnowledge,
     humanAgentName: config.humanAgentName.trim(),
     escalationRules: config.escalationRules.map((rule) => ({
       ...rule,
@@ -314,15 +426,26 @@ function normalizeSavePayload(config: ShopConfig): ShopConfig {
   grid-column: 1 / -1;
 }
 
+.shop-edit-dialog__cookie,
+.shop-edit-dialog__knowledge-list {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #f6f8fb;
+}
+
 .shop-edit-dialog__cookie {
   display: flex;
   align-items: center;
   gap: 12px;
   min-height: 40px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: #f6f8fb;
   color: #44586f;
+}
+
+.shop-edit-dialog__knowledge-list {
+  display: grid;
+  gap: 10px;
+  max-height: 220px;
+  overflow: auto;
 }
 
 .shop-edit-dialog__rules {

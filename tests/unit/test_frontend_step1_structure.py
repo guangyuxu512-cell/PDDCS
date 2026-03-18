@@ -23,6 +23,7 @@ DASHBOARD_VIEW_PATH = FRONTEND_DIR / "src" / "views" / "Dashboard.vue"
 SHOP_MANAGE_VIEW_PATH = FRONTEND_DIR / "src" / "views" / "ShopManage.vue"
 SHOP_CARD_PATH = FRONTEND_DIR / "src" / "components" / "ShopCard.vue"
 SHOP_EDIT_DIALOG_PATH = FRONTEND_DIR / "src" / "components" / "ShopEditDialog.vue"
+APP_LAYOUT_PATH = FRONTEND_DIR / "src" / "components" / "layout" / "AppLayout.vue"
 VITE_CONFIG_PATH = FRONTEND_DIR / "vite.config.ts"
 ENV_PATH = FRONTEND_DIR / ".env.development"
 
@@ -49,7 +50,6 @@ EXPECTED_FILES = {
     "src/components/ShopEditDialog.vue",
     "src/components/layout/AppLayout.vue",
     "src/components/layout/Sidebar.vue",
-    "src/components/layout/Topbar.vue",
     "src/views/Dashboard.vue",
     "src/views/ShopManage.vue",
     "src/views/ShopEdit.vue",
@@ -106,6 +106,7 @@ def test_frontend_step1_required_files_exist() -> None:
     }
     assert EXPECTED_FILES.issubset(existing)
     assert "src/views/EscalationQueue.vue" not in existing
+    assert "src/components/layout/Topbar.vue" not in existing
     assert ENV_PATH.read_text(encoding="utf-8").strip() == "VITE_API_BASE_URL=/api"
 
 
@@ -126,10 +127,8 @@ def test_frontend_router_request_and_vite_config_match_step1_contract() -> None:
     shop_manage_view_content = SHOP_MANAGE_VIEW_PATH.read_text(encoding="utf-8")
     shop_card_content = SHOP_CARD_PATH.read_text(encoding="utf-8")
     shop_edit_dialog_content = SHOP_EDIT_DIALOG_PATH.read_text(encoding="utf-8")
+    app_layout_content = APP_LAYOUT_PATH.read_text(encoding="utf-8")
     vite_config_content = VITE_CONFIG_PATH.read_text(encoding="utf-8")
-    topbar_content = (FRONTEND_DIR / "src" / "components" / "layout" / "Topbar.vue").read_text(
-        encoding="utf-8"
-    )
     sidebar_content = (FRONTEND_DIR / "src" / "components" / "layout" / "Sidebar.vue").read_text(
         encoding="utf-8"
     )
@@ -335,6 +334,19 @@ def test_frontend_router_request_and_vite_config_match_step1_contract() -> None:
         "components/ShopEditDialog.vue",
     )
     validate_required_substrings(
+        app_layout_content,
+        [
+            "import Sidebar from '@/components/layout/Sidebar.vue';",
+            "padding-top: 24px;",
+        ],
+        "components/layout/AppLayout.vue",
+    )
+    validate_forbidden_substrings(
+        app_layout_content,
+        ["<Topbar", "Topbar.vue", "import Topbar"],
+        "components/layout/AppLayout.vue",
+    )
+    validate_required_substrings(
         vite_config_content,
         [
             "AutoImport(",
@@ -344,16 +356,6 @@ def test_frontend_router_request_and_vite_config_match_step1_contract() -> None:
             "mockPath: 'src/mock'",
         ],
         "vite.config.ts",
-    )
-    validate_required_substrings(
-        topbar_content,
-        ["const currentTitle = computed(() => route.meta.title ?? '总览');"],
-        "Topbar.vue",
-    )
-    validate_forbidden_substrings(
-        topbar_content,
-        ["el-switch", "Bell", "ElMessage", "Step 1", "showNotifications", "handleAiToggle", "aiEnabled"],
-        "Topbar.vue",
     )
     validate_required_substrings(
         sidebar_content,

@@ -13,3 +13,7 @@ export async function toggleShopAi(shopId: string, enabled: boolean): Promise<Sh
 export async function toggleShopStatus(shopId: string): Promise<Shop> {
   return unwrapResponse(request.post<ApiResponse<Shop>>(`/shops/${shopId}/toggle`));
 }
+
+export async function openShopBrowser(shopId: string): Promise<null> {
+  return unwrapResponse(request.post<ApiResponse<null>>(`/shops/${shopId}/open-browser`));
+}

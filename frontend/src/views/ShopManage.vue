@@ -29,6 +29,7 @@
               :key="shop.id"
               :shop="shop"
               @edit="handleEdit"
+              @open-browser="handleOpenBrowser"
               @toggle-ai="handleToggleAi"
               @toggle-status="handleToggleStatus"
             />
@@ -53,7 +54,7 @@
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 
-import { fetchShopList, toggleShopAi, toggleShopStatus } from '@/api/shop';
+import { fetchShopList, openShopBrowser, toggleShopAi, toggleShopStatus } from '@/api/shop';
 import ShopCard from '@/components/ShopCard.vue';
 import ShopEditDialog from '@/components/ShopEditDialog.vue';
 import { platformLabel, type Platform, type Shop } from '@/types/shop';
@@ -118,6 +119,15 @@ async function handleToggleStatus(shopId: string): Promise<void> {
     replaceShop(updatedShop);
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '店铺状态更新失败');
+  }
+}
+
+async function handleOpenBrowser(shopId: string): Promise<void> {
+  try {
+    await openShopBrowser(shopId);
+    ElMessage.success('正在打开客服后台，请在浏览器窗口中操作');
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '打开客服后台失败');
   }
 }
 

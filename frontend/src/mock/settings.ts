@@ -46,6 +46,24 @@ const settingsMocks: MockMethod[] = [
       };
     },
   },
+  {
+    url: '/api/settings/test-llm',
+    method: 'post',
+    response: async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1000);
+      });
+
+      return {
+        code: 0,
+        msg: 'success',
+        data: {
+          ok: true,
+          message: 'LLM 连接测试成功，模型响应正常',
+        },
+      };
+    },
+  },
 ];
 
 export default settingsMocks;

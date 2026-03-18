@@ -14,6 +14,11 @@
           <el-form-item label="API Key">
             <el-input v-model="formState.apiKey" show-password />
           </el-form-item>
+          <el-form-item class="settings__test-action" label="连接测试">
+            <el-button :loading="testingConnection" plain type="success" @click="handleTestConnection">
+              测试连接
+            </el-button>
+          </el-form-item>
           <el-form-item label="默认模型名称">
             <el-input v-model="formState.defaultModel" />
           </el-form-item>
@@ -66,11 +71,12 @@
 import { ElMessage } from 'element-plus';
 import { onMounted, ref } from 'vue';
 
-import { fetchSettings, saveSettings } from '@/api/settings';
+import { fetchSettings, saveSettings, testLlmConnection } from '@/api/settings';
 import type { LogLevel, SystemSettings } from '@/types/settings';
 
 const loading = ref(true);
 const saving = ref(false);
+const testingConnection = ref(false);
 const defaultKeywordsText = ref('');
 const formState = ref<SystemSettings>({
   apiBaseUrl: '',
@@ -120,6 +126,28 @@ async function handleSave(): Promise<void> {
     saving.value = false;
   }
 }
+
+async function handleTestConnection(): Promise<void> {
+  if (!formState.value.apiBaseUrl.trim() || !formState.value.apiKey.trim() || !formState.value.defaultModel.trim()) {
+    ElMessage.error('请先填写 API Base URL、API Key 和默认模型名称');
+    return;
+  }
+
+  testingConnection.value = true;
+  try {
+    await testLlmConnection({
+      apiBaseUrl: formState.value.apiBaseUrl.trim(),
+      apiKey: formState.value.apiKey.trim(),
+      model: formState.value.defaultModel.trim(),
+    });
+    ElMessage.success('LLM 连接测试成功，模型响应正常');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '未知错误';
+    ElMessage.error(`连接失败: ${message}`);
+  } finally {
+    testingConnection.value = false;
+  }
+}
 </script>
 
 <style scoped>
@@ -145,6 +173,10 @@ async function handleSave(): Promise<void> {
 .settings__full,
 .settings__hint {
   grid-column: 1 / -1;
+}
+
+.settings__test-action {
+  align-self: end;
 }
 
 .settings__hint {

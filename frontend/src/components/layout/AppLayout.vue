@@ -2,7 +2,6 @@
   <el-container class="app-layout">
     <Sidebar class="app-layout__sidebar" />
     <el-container class="app-layout__shell">
-      <Topbar />
       <el-main class="app-layout__main">
         <RouterView v-slot="{ Component }">
           <transition name="page-fade" mode="out-in">
@@ -16,7 +15,6 @@
 
 <script setup lang="ts">
 import Sidebar from '@/components/layout/Sidebar.vue';
-import Topbar from '@/components/layout/Topbar.vue';
 </script>
 
 <style scoped>
@@ -36,6 +34,7 @@ import Topbar from '@/components/layout/Topbar.vue';
 
 .app-layout__main {
   padding: 24px;
+  padding-top: 24px;
 }
 
 .page-fade-enter-active,

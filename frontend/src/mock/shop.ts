@@ -139,6 +139,15 @@ const shopMocks: MockMethod[] = [
       };
     },
   },
+  {
+    url: '/api/shops/:id/open-browser',
+    method: 'post',
+    response: () => ({
+      code: 0,
+      msg: 'success',
+      data: null,
+    }),
+  },
 ];
 
 export default shopMocks;

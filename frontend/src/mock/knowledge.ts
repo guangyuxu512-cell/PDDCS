@@ -105,6 +105,17 @@ const knowledgeMocks: MockMethod[] = [
     }),
   },
   {
+    url: '/api/knowledge/files',
+    method: 'get',
+    response: () => ({
+      code: 0,
+      msg: 'success',
+      data: Object.keys(documents)
+        .filter((path) => path.endsWith('.md'))
+        .sort((left, right) => left.localeCompare(right, 'zh-CN')),
+    }),
+  },
+  {
     url: '/api/knowledge/document',
     method: 'get',
     response: ({ query }: KnowledgeRequest) => {

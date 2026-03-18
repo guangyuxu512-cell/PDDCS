@@ -35,6 +35,11 @@
       </dl>
 
       <div class="shop-card__actions">
+        <el-tooltip content="打开客服后台" placement="top">
+          <el-button circle plain @click="emit('open-browser', shop.id)">
+            <el-icon><Monitor /></el-icon>
+          </el-button>
+        </el-tooltip>
         <el-button plain @click="emit('edit', shop.id)">编辑</el-button>
         <el-button :type="shop.isOnline ? 'danger' : 'primary'" @click="emit('toggleStatus', shop.id)">
           {{ shop.isOnline ? '停止' : '启动' }}
@@ -45,6 +50,7 @@
 </template>
 
 <script setup lang="ts">
+import { Monitor } from '@element-plus/icons-vue';
 import { computed } from 'vue';
 
 import { platformLabel, type Shop } from '@/types/shop';
@@ -55,6 +61,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   edit: [shopId: string];
+  'open-browser': [shopId: string];
   toggleAi: [shopId: string, enabled: boolean];
   toggleStatus: [shopId: string];
 }>();

@@ -11,6 +11,8 @@ export interface EscalationRule {
 export interface ShopConfig {
   shopId: string;
   name: string;
+  username: string;
+  password: string;
   platform: Platform;
   cookieValid: boolean;
   cookieLastRefresh: string;
@@ -19,6 +21,8 @@ export interface ShopConfig {
   customApiKey?: string;
   customModel?: string;
   replyStyleNote?: string;
+  knowledgePaths: string[];
+  useGlobalKnowledge: boolean;
   humanAgentName: string;
   escalationRules: EscalationRule[];
   escalationFallbackMsg: string;
