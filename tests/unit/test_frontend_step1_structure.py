@@ -107,7 +107,7 @@ def test_frontend_step1_required_files_exist() -> None:
     assert EXPECTED_FILES.issubset(existing)
     assert "src/views/EscalationQueue.vue" not in existing
     assert "src/components/layout/Topbar.vue" not in existing
-    assert ENV_PATH.read_text(encoding="utf-8").strip() == "VITE_API_BASE_URL=/api"
+    assert ENV_PATH.read_text(encoding="utf-8").strip() == "VITE_API_BASE_URL=http://localhost:8000/api"
 
 
 def test_frontend_router_request_and_vite_config_match_step1_contract() -> None:
