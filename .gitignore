@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.pyc
+
+# 环境
+.env
+data/
+
+# 前端
+node_modules/
+frontend/dist/
+
+# 多Agent协作（临时文档）
+.pipeline/
+
+# 缓存
+.pytest_cache/
+
+#角色定义文档
+.roles/
+.pipeline/
+
+# 不需要提交的MD文档（按需调整）
+改造进度.md
+建议.md
+Agent桥接与心跳功能改造建议.md
+ISSUES.md
+PLAN.md
+
+#IDE
+.vscode/
+.claude/
+
+# 日志和临时文件
+*.log
+*.tmp
+*.backup
+*.bak
+recent_logs.txt
+token.txt
+nul
+dosc/
+
+.env
+data/
+__pycache__/
+*.pyc
+node_modules/
+.claude/
+tmp_api_check/
+frontend/dist/
+*.dbdata/
+__pycache__/
