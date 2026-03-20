@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import Literal
 
 from backend.api.response import fail, ok
+from backend.engines.playwright_engine import engine
 from backend.services.scheduler import get_running_shops, start_shop, stop_shop
 from backend.services.shop_service import (
     create_shop,
@@ -119,3 +120,28 @@ async def api_stop_shop(shop_id: str) -> dict[str, Any]:
 @router.get("/shops/running")
 async def api_running_shops() -> dict[str, Any]:
     return ok(get_running_shops())
+
+
+@router.get("/shops/memory")
+async def api_memory_info() -> dict[str, Any]:
+    """获取浏览器引擎内存使用信息。"""
+    info = await engine.get_memory_info()
+    return ok(info)
+
+
+@router.post("/shops/start-all")
+async def api_start_all() -> dict[str, Any]:
+    """启动所有已启用的店铺。"""
+    from backend.services.scheduler import start_all_online_shops
+
+    count = await start_all_online_shops()
+    return ok({"started": count})
+
+
+@router.post("/shops/stop-all")
+async def api_stop_all() -> dict[str, Any]:
+    """停止所有运行中的店铺。"""
+    from backend.services.scheduler import stop_all_shops
+
+    count = await stop_all_shops()
+    return ok({"stopped": count})

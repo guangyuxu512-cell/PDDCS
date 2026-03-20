@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
 PDD_CHAT_URL = "https://mms.pinduoduo.com/chat-merchant/#/"
+PDD_HOST = "mms.pinduoduo.com"
+PDD_CHAT_PATH = "chat-merchant"
+LOGIN_PATH_KEYWORDS = ("login", "passport")
+SESSION_ITEM_SELECTOR = "li.chat-item"
 
 
 async def _wait(awaitable: Any, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> Any:
@@ -67,3 +71,36 @@ class CookieManager:
         except Exception as exc:
             logger.warning("Failed to validate cookie state: %s", exc)
             return False
+
+    async def is_valid_without_navigate(self, page: Page) -> bool:
+        """Checks whether the current page still has a valid login session without navigating."""
+        try:
+            current_url = page.url.lower()
+            if any(keyword in current_url for keyword in LOGIN_PATH_KEYWORDS):
+                logger.warning("Cookie expired: redirected to login page")
+                return False
+
+            if PDD_CHAT_PATH not in current_url and PDD_HOST not in current_url:
+                logger.warning("Cookie expired: not on PDD page, url=%s", page.url)
+                return False
+
+            try:
+                element = await _wait(
+                    page.query_selector(SESSION_ITEM_SELECTOR),
+                    timeout_seconds=3.0,
+                )
+            except Exception:
+                return False
+
+            return element is not None
+        except Exception as exc:
+            logger.warning("Cookie validation failed: %s", exc)
+            return False
+
+    async def periodic_save(self, shop_id: str, context: BrowserContext) -> None:
+        """Persists cookies without surfacing periodic-save failures to callers."""
+        try:
+            await self.save(shop_id, context)
+            logger.debug("Periodic cookie save for shop %s", shop_id)
+        except Exception:
+            logger.exception("Failed periodic cookie save for shop %s", shop_id)
