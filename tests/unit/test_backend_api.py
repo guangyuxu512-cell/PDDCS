@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.api import shops as shops_api
 from backend.db import database
 from backend.main import app
 
@@ -123,7 +124,25 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClie
     _cleanup_database_files(db_path)
 
 
-def test_shop_endpoints_cover_listing_updates_and_missing_shop(client: TestClient) -> None:
+def test_shop_endpoints_cover_listing_updates_and_missing_shop(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_calls: list[str] = []
+    stop_calls: list[str] = []
+
+    async def fake_start_shop(shop_id: str) -> bool:
+        start_calls.append(shop_id)
+        return True
+
+    async def fake_stop_shop(shop_id: str) -> bool:
+        stop_calls.append(shop_id)
+        return True
+
+    monkeypatch.setattr(shops_api, "start_shop", fake_start_shop)
+    monkeypatch.setattr(shops_api, "stop_shop", fake_stop_shop)
+    monkeypatch.setattr(shops_api, "get_running_shops", lambda: ["shop-1"])
+
     list_response = client.get("/api/shops")
     assert list_response.status_code == 200
     payload = list_response.json()
@@ -134,11 +153,28 @@ def test_shop_endpoints_cover_listing_updates_and_missing_shop(client: TestClien
     toggle_ai_response = client.patch("/api/shops/shop-1/ai", json={"enabled": True})
     assert toggle_ai_response.json()["data"]["aiEnabled"] is True
 
-    toggle_status_response = client.post("/api/shops/shop-1/toggle")
-    assert toggle_status_response.json()["data"]["isOnline"] is True
+    toggle_online_response = client.post("/api/shops/shop-1/toggle")
+    assert toggle_online_response.json()["data"]["isOnline"] is True
+    assert start_calls == ["shop-1"]
+    with database.get_db() as conn:
+        online_row = conn.execute("SELECT is_online FROM shops WHERE id=?", ("shop-1",)).fetchone()
+    assert online_row is not None
+    assert online_row["is_online"] == 1
+
+    toggle_offline_response = client.post("/api/shops/shop-1/toggle")
+    assert toggle_offline_response.json()["data"]["isOnline"] is False
+    assert stop_calls == ["shop-1"]
+    with database.get_db() as conn:
+        offline_row = conn.execute("SELECT is_online FROM shops WHERE id=?", ("shop-1",)).fetchone()
+    assert offline_row is not None
+    assert offline_row["is_online"] == 0
 
     open_browser_response = client.post("/api/shops/shop-1/open-browser")
     assert open_browser_response.json() == {"code": 0, "msg": "ok", "data": None}
+    with database.get_db() as conn:
+        reopened_row = conn.execute("SELECT is_online FROM shops WHERE id=?", ("shop-1",)).fetchone()
+    assert reopened_row is not None
+    assert reopened_row["is_online"] == 1
 
     default_config_response = client.get("/api/shops/shop-2/config")
     default_config = default_config_response.json()["data"]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter
@@ -7,6 +9,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import Literal
 
 from backend.api.response import fail, ok
+from backend.db.database import get_db
 from backend.engines.playwright_engine import engine
 from backend.services.scheduler import get_running_shops, start_shop, stop_shop
 from backend.services.shop_service import (
@@ -14,7 +17,6 @@ from backend.services.shop_service import (
     delete_shop,
     get_shop_config,
     list_shops,
-    open_browser,
     scan_desktop_windows,
     toggle_ai,
     toggle_status,
@@ -23,6 +25,7 @@ from backend.services.shop_service import (
 
 
 router = APIRouter(tags=["shops"])
+logger = logging.getLogger(__name__)
 
 
 class ToggleAiBody(BaseModel):
@@ -34,6 +37,15 @@ class CreateShopBody(BaseModel):
     platform: Literal["pdd"]
     username: str = Field(min_length=1)
     password: str = Field(min_length=1)
+
+
+def _set_shop_online_status(shop_id: str, is_online: bool) -> bool:
+    with get_db() as conn:
+        cursor = conn.execute(
+            "UPDATE shops SET is_online=?, updated_at=? WHERE id=?",
+            (int(is_online), datetime.now().isoformat(), shop_id),
+        )
+    return cursor.rowcount > 0
 
 
 @router.get("/shops")
@@ -61,6 +73,15 @@ async def api_toggle_status(shop_id: str) -> dict[str, Any]:
     shop = toggle_status(shop_id)
     if shop is None:
         return fail("店铺不存在")
+
+    try:
+        if shop.is_online:
+            await start_shop(shop_id)
+        else:
+            await stop_shop(shop_id)
+    except Exception:
+        logger.exception("Toggle scheduler sync failed for %s", shop_id)
+
     return ok(shop.model_dump())
 
 
@@ -73,7 +94,13 @@ async def api_delete_shop(shop_id: str) -> dict[str, Any]:
 
 @router.post("/shops/{shop_id}/open-browser")
 async def api_open_browser(shop_id: str) -> dict[str, Any]:
-    if not open_browser(shop_id):
+    if not _set_shop_online_status(shop_id, True):
+        return fail("店铺不存在")
+
+    started = await start_shop(shop_id)
+    if not started:
+        if shop_id in get_running_shops():
+            return ok(None)
         return fail("打开浏览器失败")
     return ok(None)
 
@@ -103,9 +130,12 @@ async def api_save_config(shop_id: str, body: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/shops/{shop_id}/start")
 async def api_start_shop(shop_id: str) -> dict[str, Any]:
+    if not _set_shop_online_status(shop_id, True):
+        return fail("店铺不存在")
+
     started = await start_shop(shop_id)
     if not started:
-        return fail("店铺已在运行中或不存在")
+        return fail("店铺已在运行中")
     return ok(None)
 
 
@@ -114,6 +144,8 @@ async def api_stop_shop(shop_id: str) -> dict[str, Any]:
     stopped = await stop_shop(shop_id)
     if not stopped:
         return fail("店铺未在运行")
+
+    _set_shop_online_status(shop_id, False)
     return ok(None)
 
 

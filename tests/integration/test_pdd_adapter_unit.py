@@ -47,6 +47,14 @@ class FakeElement:
         self.clicked = True
 
 
+class FakeKeyboard:
+    def __init__(self) -> None:
+        self.pressed: list[str] = []
+
+    async def press(self, key: str) -> None:
+        self.pressed.append(key)
+
+
 class FakeScope:
     def __init__(
         self,
@@ -57,6 +65,7 @@ class FakeScope:
         wait_selectors: dict[str, FakeElement] | None = None,
         frames: list[FakeScope] | None = None,
         final_url: str | None = None,
+        url_after_timeout_call: dict[int, str] | None = None,
     ) -> None:
         self.url = url
         self.frames = frames or []
@@ -64,8 +73,10 @@ class FakeScope:
         self._selector_lists = selector_lists or {}
         self._wait_selectors = wait_selectors or {}
         self._final_url = final_url
+        self._url_after_timeout_call = url_after_timeout_call or {}
         self.goto_calls: list[tuple[str, str, int]] = []
         self.wait_for_timeout_calls: list[int] = []
+        self.keyboard = FakeKeyboard()
 
     async def query_selector(self, selector: str) -> FakeElement | None:
         return self._selectors.get(selector)
@@ -86,6 +97,9 @@ class FakeScope:
 
     async def wait_for_timeout(self, timeout_ms: int) -> None:
         self.wait_for_timeout_calls.append(timeout_ms)
+        next_url = self._url_after_timeout_call.get(len(self.wait_for_timeout_calls))
+        if next_url is not None:
+            self.url = next_url
 
 
 class FakeHumanSimulator:
@@ -130,6 +144,12 @@ def test_selectors_not_empty() -> None:
         assert isinstance(value, SelectorConfig), f"Selector '{key}' is not wrapped by SelectorConfig"
         assert value.primary, f"Selector '{key}' primary selector is empty"
         assert all(selector for selector in value.all()), f"Selector '{key}' contains empty fallback values"
+    assert SELECTORS["login_tab_account"].primary == ".login-tab div:has-text('账号登录')"
+    assert SELECTORS["login_username"].primary == "#usernameId"
+    assert SELECTORS["login_password"].primary == "#passwordId"
+    assert SELECTORS["login_button"].primary == "button:has-text('登录')"
+    assert SELECTORS["login_captcha_slider"].primary == ".captcha-container"
+    assert SELECTORS["login_sms_input"].primary == "input[placeholder='请输入短信验证码']"
     assert SELECTORS["session_item"].primary == "li.chat-item"
     assert SELECTORS["message_container"].primary == ".merchantMessage"
     assert SELECTORS["input_box"].primary == "textarea#replyTextarea"
@@ -226,3 +246,61 @@ async def test_send_message_uses_ctrl_enter_when_send_button_missing() -> None:
     assert human_simulator.typed == [(input_box, "你好")]
     assert human_simulator.clicked == []
     assert input_box.pressed == ["Control+Enter"]
+
+
+@pytest.mark.asyncio
+async def test_auto_login_uses_account_login_selectors_and_waits_for_chat_list() -> None:
+    account_tab = FakeElement()
+    username_input = FakeElement()
+    password_input = FakeElement()
+    login_button = FakeElement()
+    page = FakeScope(
+        url="https://mms.pinduoduo.com/login/",
+        selectors={".login-tab div:has-text('账号登录')": account_tab},
+        wait_selectors={
+            "#usernameId": username_input,
+            "#passwordId": password_input,
+            "button:has-text('登录')": login_button,
+        },
+        url_after_timeout_call={4: "https://mms.pinduoduo.com/chat-merchant/#/"},
+    )
+    human_simulator = FakeHumanSimulator()
+    adapter = PddAdapter(page=page, shop_id="shop-1", human_simulator=human_simulator)
+
+    logged_in = await adapter.auto_login("seller", "secret")
+
+    assert logged_in is True
+    assert human_simulator.clicked == [account_tab, login_button]
+    assert human_simulator.typed == [(username_input, "seller"), (password_input, "secret")]
+    assert page.keyboard.pressed == ["Control+a", "Control+a"]
+
+
+@pytest.mark.asyncio
+async def test_navigate_to_chat_uses_auto_login_when_chat_list_is_missing() -> None:
+    page = FakeScope(
+        url="https://mms.pinduoduo.com/login/",
+        final_url="https://mms.pinduoduo.com/login/",
+    )
+    adapter = PddAdapter(page=page, shop_id="shop-1", human_simulator=FakeHumanSimulator())
+    auto_login_calls: list[tuple[str, str, int]] = []
+
+    async def fake_auto_login(username: str, password: str, timeout_ms: int = 120000) -> bool:
+        auto_login_calls.append((username, password, timeout_ms))
+        page.url = "https://mms.pinduoduo.com/chat-merchant/#/"
+        return True
+    adapter.auto_login = fake_auto_login  # type: ignore[method-assign]
+
+    await adapter.navigate_to_chat("seller", "secret")
+
+    assert page.goto_calls == [(PDD_CHAT_URL, "domcontentloaded", 30000)]
+    assert auto_login_calls == [("seller", "secret", 120000)]
+
+
+@pytest.mark.asyncio
+async def test_wait_for_login_returns_false_when_chat_list_never_appears() -> None:
+    page = FakeScope(url="https://mms.pinduoduo.com/login/")
+    adapter = PddAdapter(page=page, shop_id="shop-1", human_simulator=FakeHumanSimulator())
+
+    logged_in = await adapter.wait_for_login(timeout_ms=1000)
+
+    assert logged_in is False

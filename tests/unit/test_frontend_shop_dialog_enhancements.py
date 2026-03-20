@@ -92,6 +92,10 @@ def test_shop_dialog_enhancement_contracts() -> None:
         [
             "openShopBrowser",
             "request.post<ApiResponse<null>>(`/shops/${shopId}/open-browser`)",
+            "startShop",
+            "request.post<ApiResponse<null>>(`/shops/${shopId}/start`)",
+            "stopShop",
+            "request.post<ApiResponse<null>>(`/shops/${shopId}/stop`)",
         ],
         "api/shop.ts",
     )
@@ -116,6 +120,8 @@ def test_shop_dialog_enhancement_contracts() -> None:
         shop_mock,
         [
             "url: '/api/shops/:id/open-browser'",
+            "url: '/api/shops/:id/start'",
+            "url: '/api/shops/:id/stop'",
             "data: null",
         ],
         "mock/shop.ts",
@@ -144,8 +150,11 @@ def test_shop_dialog_enhancement_contracts() -> None:
         shop_manage,
         [
             "@open-browser=\"handleOpenBrowser\"",
-            "openShopBrowser",
-            "正在打开客服后台，请在浏览器窗口中操作",
+            "startShop",
+            "stopShop",
+            "店铺已停止",
+            "正在启动店铺，浏览器即将打开...",
+            "店铺已在运行中，请查看浏览器窗口",
         ],
         "views/ShopManage.vue",
     )

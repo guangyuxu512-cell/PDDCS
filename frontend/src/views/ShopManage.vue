@@ -98,8 +98,9 @@ import {
   createShop,
   deleteShop,
   fetchShopList,
-  openShopBrowser,
   scanDesktopWindows,
+  startShop,
+  stopShop,
   toggleShopAi,
   toggleShopStatus,
 } from '@/api/shop';
@@ -195,11 +196,23 @@ async function handleToggleAi(shopId: string, enabled: boolean): Promise<void> {
 }
 
 async function handleToggleStatus(shopId: string): Promise<void> {
+  const shop = shops.value.find((item) => item.id === shopId);
+  if (!shop) {
+    return;
+  }
+
   try {
-    const updatedShop = await toggleShopStatus(shopId);
-    replaceShop(updatedShop);
+    if (shop.isOnline) {
+      await stopShop(shopId);
+      ElMessage.success('店铺已停止');
+    } else {
+      await startShop(shopId);
+      ElMessage.success('正在启动店铺，浏览器即将打开...');
+    }
+    await loadShops();
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '店铺状态更新失败');
+    ElMessage.error(error instanceof Error ? error.message : '操作失败');
+    await loadShops();
   }
 }
 
@@ -214,11 +227,23 @@ async function handleDeleteShop(shopId: string): Promise<void> {
 }
 
 async function handleOpenBrowser(shopId: string): Promise<void> {
+  const shop = shops.value.find((item) => item.id === shopId);
+  if (!shop) {
+    return;
+  }
+
   try {
-    await openShopBrowser(shopId);
-    ElMessage.success('正在打开客服后台，请在浏览器窗口中操作');
+    if (shop.isOnline) {
+      ElMessage.info('店铺已在运行中，请查看浏览器窗口');
+      return;
+    }
+
+    await startShop(shopId);
+    ElMessage.success('正在启动店铺，浏览器即将打开...');
+    await loadShops();
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '打开客服后台失败');
+    ElMessage.error(error instanceof Error ? error.message : '启动失败');
+    await loadShops();
   }
 }
 

@@ -24,6 +24,10 @@ def _selector(primary: str, *fallbacks: str) -> SelectorConfig:
 
 
 SELECTORS: dict[str, SelectorConfig] = {
+    "login_tab": _selector(".login-tab div:has-text('账号登录')"),
+    "login_username": _selector("#usernameId"),
+    "login_password": _selector("#passwordId"),
+    "login_submit": _selector("button:has-text('登录')"),
     "session_list": _selector(
         "ul:has(> li.chat-item)",
         "[class*='chat-list']",
@@ -68,8 +72,29 @@ SELECTORS: dict[str, SelectorConfig] = {
     ),
     "agent_select": _selector(".agent-list", "[class*='agentList']", "[class*='staffList']"),
     "agent_item": _selector(".agent-item", "[class*='agentItem']", "[class*='staffItem']"),
+    "login_tab_account": _selector(
+        ".login-tab div:has-text('账号登录')",
+        "text=账号登录",
+        ".login-tab-item",
+    ),
+    "login_button": _selector(
+        "button:has-text('登录')",
+        "button[type='submit']",
+    ),
+    "login_captcha_slider": _selector(
+        ".captcha-container",
+        ".captcha-slider",
+        ".sc-jrQzAO",
+        "#captcha_container",
+    ),
+    "login_sms_input": _selector(
+        "input[placeholder='请输入短信验证码']",
+        "input[placeholder*='验证码']",
+        "input[placeholder*='短信']",
+    ),
 }
 PDD_CHAT_URL = "https://mms.pinduoduo.com/chat-merchant/#/"
+PDD_LOGIN_URL = "https://mms.pinduoduo.com/login/"
 DEFAULT_TIMEOUT_SECONDS = 10.0
 T = TypeVar("T")
 SelectorScope = Page | Frame | ElementHandle
@@ -139,6 +164,30 @@ class PddAdapter(BaseAdapter):
             raise last_error
         return None
 
+    async def _wait_for_selector_keys(
+        self,
+        selector_keys: tuple[str, ...],
+        timeout_ms: int,
+    ) -> ElementHandle | None:
+        per_key_timeout_ms = max(timeout_ms // max(len(selector_keys), 1), 1)
+        last_error: Exception | None = None
+        for selector_key in selector_keys:
+            try:
+                return await self._wait_for_selector(selector_key, timeout_ms=per_key_timeout_ms)
+            except (PlaywrightTimeoutError, TimeoutError) as exc:
+                last_error = exc
+                continue
+        if last_error is not None:
+            raise last_error
+        return None
+
+    async def _wait_for_logged_in_element(self, timeout_ms: int) -> bool:
+        try:
+            await self._wait_for_selector_keys(("session_item", "session_list"), timeout_ms=timeout_ms)
+            return True
+        except (PlaywrightTimeoutError, TimeoutError):
+            return False
+
     async def _find_chat_frame(self) -> ChatScope:
         """查找聊天消息所在的执行上下文（主页面或子 frame）。"""
         try:
@@ -167,24 +216,176 @@ class PddAdapter(BaseAdapter):
         logger.warning("merchantMessage not found in any frame, using main page")
         return self._page
 
-    async def navigate_to_chat(self) -> None:
-        """导航到拼多多客服聊天页。"""
-        if "mms.pinduoduo.com/chat-merchant" in self._page.url:
-            logger.info("Already on PDD chat page")
+    async def _is_on_login_page(self) -> bool:
+        """检查当前是否处于登录页。"""
+        url = self._page.url.lower()
+        return "login" in url or "passport" in url
+
+    async def navigate_to_chat(self, username: str = "", password: str = "") -> None:
+        """导航到拼多多客服聊天页，如有需要则自动登录。"""
+        if "mms.pinduoduo.com/chat-merchant" in self._page.url and await self.is_logged_in():
+            logger.info("[%s] Already on PDD chat page and logged in", self._shop_id)
             self._chat_frame = await self._find_chat_frame()
             return
 
-        logger.info("Navigating to %s", PDD_CHAT_URL)
-        await _wait(
-            self._page.goto(PDD_CHAT_URL, wait_until="networkidle", timeout=30000),
-            timeout_seconds=35.0,
-        )
+        logger.info("[%s] Navigating to %s", self._shop_id, PDD_CHAT_URL)
         try:
-            await self._wait_for_selector("session_list", timeout_ms=10000)
-            logger.info("PDD chat page loaded, session list visible")
+            await _wait(
+                self._page.goto(PDD_CHAT_URL, wait_until="domcontentloaded", timeout=30000),
+                timeout_seconds=35.0,
+            )
+        except Exception as exc:
+            logger.warning("[%s] Navigation to chat page failed: %s", self._shop_id, exc)
+
+        await _wait(self._page.wait_for_timeout(3000), timeout_seconds=5.0)
+
+        if await self._is_on_login_page():
+            if username and password:
+                login_ok = await self.auto_login(username, password)
+                if login_ok:
+                    if "chat-merchant" not in self._page.url.lower():
+                        try:
+                            await _wait(
+                                self._page.goto(PDD_CHAT_URL, wait_until="domcontentloaded", timeout=30000),
+                                timeout_seconds=35.0,
+                            )
+                            await _wait(self._page.wait_for_timeout(3000), timeout_seconds=5.0)
+                        except Exception as exc:
+                            logger.warning("[%s] Post-login navigation failed: %s", self._shop_id, exc)
+                else:
+                    logger.error("[%s] Auto-login failed", self._shop_id)
+                    return
+            else:
+                logger.warning("[%s] On login page but no credentials provided, waiting for manual login", self._shop_id)
+
+        try:
+            await self._wait_for_selector("session_list", timeout_ms=15000)
+            logger.info("[%s] PDD chat page loaded, session list visible", self._shop_id)
         except (PlaywrightTimeoutError, TimeoutError):
-            logger.warning("Session list not found, manual login may be required")
+            logger.warning("[%s] Session list not found after navigation", self._shop_id)
+
         self._chat_frame = await self._find_chat_frame()
+
+    async def auto_login(self, username: str, password: str, timeout_ms: int = 120000) -> bool:
+        """
+        自动登录拼多多商家后台。
+
+        Returns:
+            True 表示登录成功，False 表示超时或失败。
+        """
+        if not username or not password:
+            logger.warning("[%s] Auto-login skipped because credentials are incomplete", self._shop_id)
+            return False
+
+        logger.info("[%s] Starting auto-login", self._shop_id)
+
+        if not await self._is_on_login_page():
+            logger.info("[%s] Navigating to login page: %s", self._shop_id, PDD_LOGIN_URL)
+            try:
+                await _wait(
+                    self._page.goto(PDD_LOGIN_URL, wait_until="domcontentloaded", timeout=30000),
+                    timeout_seconds=35.0,
+                )
+            except Exception as exc:
+                logger.error("[%s] Failed to navigate to login page: %s", self._shop_id, exc)
+                return False
+
+        await _wait(self._page.wait_for_timeout(2000), timeout_seconds=5.0)
+
+        try:
+            tab = await self._query_selector(self._page, "login_tab_account")
+            if tab is not None:
+                await self._human_simulator.bezier_click(tab)
+                await _wait(self._page.wait_for_timeout(1000), timeout_seconds=3.0)
+                logger.info("[%s] Clicked '账号登录' tab", self._shop_id)
+            else:
+                logger.info("[%s] '账号登录' tab not found, may already be on account login", self._shop_id)
+        except Exception as exc:
+            logger.warning("[%s] Failed to click login tab: %s", self._shop_id, exc)
+
+        try:
+            username_input = await self._wait_for_selector("login_username", timeout_ms=5000)
+            if username_input is None:
+                logger.error("[%s] Username input (#usernameId) not found", self._shop_id)
+                return False
+
+            await _wait(username_input.click(), timeout_seconds=2.0)
+            await _wait(self._page.keyboard.press("Control+a"), timeout_seconds=2.0)
+            await self._human_simulator.simulate_typing(username_input, username)
+            logger.info("[%s] Username entered", self._shop_id)
+        except Exception as exc:
+            logger.error("[%s] Failed to enter username: %s", self._shop_id, exc)
+            return False
+
+        try:
+            password_input = await self._wait_for_selector("login_password", timeout_ms=5000)
+            if password_input is None:
+                logger.error("[%s] Password input (#passwordId) not found", self._shop_id)
+                return False
+
+            await _wait(password_input.click(), timeout_seconds=2.0)
+            await _wait(self._page.keyboard.press("Control+a"), timeout_seconds=2.0)
+            await self._human_simulator.simulate_typing(password_input, password)
+            logger.info("[%s] Password entered", self._shop_id)
+        except Exception as exc:
+            logger.error("[%s] Failed to enter password: %s", self._shop_id, exc)
+            return False
+
+        try:
+            login_btn = await self._wait_for_selector("login_button", timeout_ms=5000)
+            if login_btn is None:
+                logger.error("[%s] Login button not found", self._shop_id)
+                return False
+
+            await _wait(self._page.wait_for_timeout(500), timeout_seconds=2.0)
+            await self._human_simulator.bezier_click(login_btn)
+            logger.info("[%s] Login button clicked", self._shop_id)
+        except Exception as exc:
+            logger.error("[%s] Failed to click login button: %s", self._shop_id, exc)
+            return False
+
+        logger.info("[%s] Waiting for login result (captcha may appear)...", self._shop_id)
+        max_wait_seconds = max(timeout_ms // 1000, 1)
+        interval_seconds = 3.0
+        elapsed_seconds = 0.0
+
+        while elapsed_seconds < max_wait_seconds:
+            await _wait(
+                self._page.wait_for_timeout(int(interval_seconds * 1000)),
+                timeout_seconds=interval_seconds + 2.0,
+            )
+            elapsed_seconds += interval_seconds
+
+            current_url = self._page.url.lower()
+            if "login" not in current_url and "passport" not in current_url:
+                logger.info("[%s] Login successful! Redirected to: %s", self._shop_id, self._page.url)
+                return True
+
+            captcha = await self._query_selector(self._page, "login_captcha_slider")
+            if captcha is not None:
+                if elapsed_seconds % 15 < interval_seconds:
+                    logger.warning(
+                        "[%s] Captcha detected, waiting for manual resolution... (%.0fs)",
+                        self._shop_id,
+                        elapsed_seconds,
+                    )
+                continue
+
+            sms_input = await self._query_selector(self._page, "login_sms_input")
+            if sms_input is not None:
+                if elapsed_seconds % 15 < interval_seconds:
+                    logger.warning(
+                        "[%s] SMS verification required, waiting... (%.0fs)",
+                        self._shop_id,
+                        elapsed_seconds,
+                    )
+                continue
+
+            if elapsed_seconds % 15 < interval_seconds:
+                logger.info("[%s] Still on login page, waiting... (%.0fs)", self._shop_id, elapsed_seconds)
+
+        logger.error("[%s] Login timeout after %ds", self._shop_id, max_wait_seconds)
+        return False
 
     async def get_session_list(self) -> list[SessionInfo]:
         """读取左侧会话列表。"""
@@ -343,21 +544,44 @@ class PddAdapter(BaseAdapter):
             return False
 
     async def is_logged_in(self) -> bool:
-        """检查是否已登录。"""
+        """多层检测是否已登录，不依赖 URL hash。"""
         try:
-            element = await self._query_selector(self._page, "session_list")
-            return element is not None
-        except Exception:
+            current_url = self._page.url.lower()
+
+            if "login" in current_url or "passport" in current_url:
+                logger.info("[%s] Not logged in: on login/passport page", self._shop_id)
+                return False
+
+            if "chat-merchant" in current_url:
+                element = await self._query_selector(self._page, "session_list")
+                if element is not None:
+                    return True
+
+                try:
+                    await self._wait_for_selector("session_item", timeout_ms=5000)
+                    return True
+                except (PlaywrightTimeoutError, TimeoutError):
+                    pass
+
+            if (
+                "mms.pinduoduo.com" in current_url
+                and "chat-merchant" not in current_url
+                and "login" not in current_url
+            ):
+                return True
+
+            return False
+        except Exception as exc:
+            logger.warning("[%s] Login check error: %s", self._shop_id, exc)
             return False
 
     async def wait_for_login(self, timeout_ms: int = 120000) -> bool:
         """等待用户手动登录。"""
         logger.info("Waiting for manual login...")
-        try:
-            await self._wait_for_selector("session_list", timeout_ms=timeout_ms)
+        if await self._wait_for_logged_in_element(timeout_ms=timeout_ms):
             self._chat_frame = await self._find_chat_frame()
             logger.info("Login detected")
             return True
-        except (PlaywrightTimeoutError, TimeoutError):
-            logger.error("Login timeout")
-            return False
+
+        logger.error("Login timeout")
+        return False

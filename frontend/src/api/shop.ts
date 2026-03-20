@@ -36,3 +36,11 @@ export async function openShopBrowser(shopId: string): Promise<null> {
 export async function scanDesktopWindows(): Promise<Shop[]> {
   return unwrapResponse(request.post<ApiResponse<Shop[]>>('/shops/scan'));
 }
+
+export async function startShop(shopId: string): Promise<null> {
+  return unwrapResponse(request.post<ApiResponse<null>>(`/shops/${shopId}/start`));
+}
+
+export async function stopShop(shopId: string): Promise<null> {
+  return unwrapResponse(request.post<ApiResponse<null>>(`/shops/${shopId}/stop`));
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 from collections.abc import Awaitable
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_POLL_INTERVAL_SECONDS = 3.0
 DEFAULT_OPERATION_TIMEOUT_SECONDS = 15.0
 DEFAULT_ENGINE_TIMEOUT_SECONDS = 70.0
-DEFAULT_NAVIGATION_TIMEOUT_SECONDS = 40.0
+DEFAULT_NAVIGATION_TIMEOUT_SECONDS = 180.0
 DEFAULT_LOGIN_TIMEOUT_SECONDS = 130.0
 DEFAULT_MESSAGE_PROCESS_TIMEOUT_SECONDS = 50.0
 DEFAULT_LOGIN_CHECK_INTERVAL = 30
@@ -68,6 +69,15 @@ def _load_runtime_configuration(shop_id: str) -> tuple[dict[str, Any], LlmClient
     config_model = get_shop_config(shop_id)
     config = config_model.model_dump(by_alias=False) if config_model is not None else {}
     return config, create_llm_client_from_settings(settings=settings, shop_config=config)
+
+
+def _get_shop_credentials(shop_id: str) -> tuple[str, str]:
+    """从 DB 获取店铺账号密码明文。"""
+    with get_db() as conn:
+        row = conn.execute("SELECT username, password FROM shops WHERE id=?", (shop_id,)).fetchone()
+    if row is None:
+        return "", ""
+    return str(row["username"] or "").strip(), str(row["password"] or "")
 
 
 def _get_shop_proxy(shop_id: str) -> str:
@@ -186,6 +196,29 @@ class ShopScheduler:
             return False
         return bool(await _wait(waiter(timeout_ms=120000), timeout_seconds=DEFAULT_LOGIN_TIMEOUT_SECONDS))
 
+    async def _navigate_adapter_to_chat(self, shop_id: str, adapter: BaseAdapter) -> bool:
+        navigate = getattr(adapter, "navigate_to_chat")
+        username, password = _get_shop_credentials(shop_id)
+
+        try:
+            parameters = inspect.signature(navigate).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+
+        supports_credentials = "username" in parameters and "password" in parameters
+        if username and password and supports_credentials:
+            await _wait(
+                navigate(username=username, password=password),
+                timeout_seconds=DEFAULT_NAVIGATION_TIMEOUT_SECONDS,
+            )
+            return True
+
+        await _wait(
+            navigate(),
+            timeout_seconds=DEFAULT_NAVIGATION_TIMEOUT_SECONDS,
+        )
+        return False
+
     async def _process_session(
         self,
         shop_id: str,
@@ -268,13 +301,14 @@ class ShopScheduler:
                     )
                     adapter = self._create_adapter(platform, page, shop_id)
 
-                    await _wait(
-                        adapter.navigate_to_chat(),
-                        timeout_seconds=DEFAULT_NAVIGATION_TIMEOUT_SECONDS,
-                    )
+                    used_credentials = await self._navigate_adapter_to_chat(shop_id, adapter)
 
                     logged_in = await self._is_adapter_logged_in(adapter)
                     if not logged_in:
+                        if used_credentials:
+                            logger.error("[%s] Automatic login failed, stopping", shop_id)
+                            _update_shop_status(shop_id, is_online=False, cookie_valid=False)
+                            return
                         logger.warning("[%s] Not logged in, waiting for manual login...", shop_id)
                         _update_shop_status(shop_id, is_online=True, cookie_valid=False)
                         success = await self._wait_for_manual_login(shop_id, adapter)
@@ -307,12 +341,13 @@ class ShopScheduler:
                             if not still_logged_in:
                                 logger.warning("[%s] Session expired! Attempting re-login...", shop_id)
                                 _update_shop_status(shop_id, cookie_valid=False)
-                                await _wait(
-                                    adapter.navigate_to_chat(),
-                                    timeout_seconds=DEFAULT_NAVIGATION_TIMEOUT_SECONDS,
-                                )
+                                used_credentials = await self._navigate_adapter_to_chat(shop_id, adapter)
                                 still_logged_in = await self._is_adapter_logged_in(adapter)
                                 if not still_logged_in:
+                                    if used_credentials:
+                                        logger.error("[%s] Automatic re-login failed", shop_id)
+                                        _update_shop_status(shop_id, is_online=False, cookie_valid=False)
+                                        return
                                     logger.warning(
                                         "[%s] Still not logged in, waiting for manual login...",
                                         shop_id,

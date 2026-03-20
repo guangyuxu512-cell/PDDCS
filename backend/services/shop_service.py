@@ -111,13 +111,6 @@ def toggle_status(shop_id: str) -> Shop | None:
     return Shop.model_validate(dict(row)) if row is not None else None
 
 
-def open_browser(shop_id: str) -> bool:
-    """占位实现：只校验店铺是否存在。"""
-    with get_db() as conn:
-        row = conn.execute("SELECT id FROM shops WHERE id=?", (shop_id,)).fetchone()
-    return row is not None
-
-
 def scan_desktop_windows() -> list[Shop]:
     """
     桌面窗口扫描占位实现。

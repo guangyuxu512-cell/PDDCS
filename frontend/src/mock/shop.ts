@@ -148,6 +148,42 @@ const shopMocks: MockMethod[] = [
       data: null,
     }),
   },
+  {
+    url: '/api/shops/:id/start',
+    method: 'post',
+    response: ({ url }: ShopMockRequest) => {
+      const shopId = url?.split('/').slice(-2)[0] ?? '';
+      const updatedShop = updateShop(shopId, (shop) => ({
+        ...shop,
+        isOnline: true,
+        lastActiveAt: new Date().toISOString(),
+      }));
+
+      return {
+        code: updatedShop ? 0 : 404,
+        msg: updatedShop ? 'success' : 'shop not found',
+        data: null,
+      };
+    },
+  },
+  {
+    url: '/api/shops/:id/stop',
+    method: 'post',
+    response: ({ url }: ShopMockRequest) => {
+      const shopId = url?.split('/').slice(-2)[0] ?? '';
+      const updatedShop = updateShop(shopId, (shop) => ({
+        ...shop,
+        isOnline: false,
+        lastActiveAt: new Date().toISOString(),
+      }));
+
+      return {
+        code: updatedShop ? 0 : 404,
+        msg: updatedShop ? 'success' : 'shop not found',
+        data: null,
+      };
+    },
+  },
 ];
 
 export default shopMocks;
