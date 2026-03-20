@@ -6,7 +6,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from backend.api.response import ok
-from backend.services.settings_service import get_settings, save_settings, test_llm_connection
+from backend.ai.llm_client import LlmClient
+from backend.services.settings_service import get_settings, save_settings
 
 
 router = APIRouter(tags=["settings"])
@@ -32,4 +33,9 @@ async def api_save_settings(body: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/settings/test-llm")
 async def api_test_llm(body: TestLlmBody) -> dict[str, Any]:
-    return ok(test_llm_connection(body.apiBaseUrl, body.apiKey, body.model))
+    client = LlmClient(
+        api_base_url=body.apiBaseUrl,
+        api_key=body.apiKey,
+        model=body.model,
+    )
+    return ok(await client.test_connection())

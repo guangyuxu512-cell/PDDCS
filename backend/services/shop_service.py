@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from backend.db.database import get_db
 from backend.db.models import Shop, ShopConfig
@@ -24,6 +25,60 @@ def list_shops() -> list[Shop]:
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM shops ORDER BY created_at DESC").fetchall()
     return [Shop.model_validate(dict(row)) for row in rows]
+
+
+def create_shop(name: str, platform: Literal["pdd"], username: str, password: str) -> Shop:
+    """创建店铺并插入默认配置。"""
+    shop_id = str(uuid.uuid4())
+    now = _iso_now()
+
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO shops (
+                id,
+                name,
+                platform,
+                username,
+                password,
+                is_online,
+                ai_enabled,
+                cookie_valid,
+                today_served_count,
+                last_active_at,
+                created_at,
+                updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                shop_id,
+                name,
+                platform,
+                username,
+                password,
+                0,
+                0,
+                0,
+                0,
+                "",
+                now,
+                now,
+            ),
+        )
+        conn.execute("INSERT INTO shop_configs (shop_id, updated_at) VALUES (?,?)", (shop_id, now))
+        row = conn.execute("SELECT * FROM shops WHERE id=?", (shop_id,)).fetchone()
+
+    if row is None:
+        raise RuntimeError("创建店铺失败")
+
+    return Shop.model_validate(dict(row))
+
+
+def delete_shop(shop_id: str) -> bool:
+    """删除店铺。"""
+    with get_db() as conn:
+        cursor = conn.execute("DELETE FROM shops WHERE id=?", (shop_id,))
+    return cursor.rowcount > 0
 
 
 def toggle_ai(shop_id: str, enabled: bool) -> Shop | None:
@@ -61,6 +116,20 @@ def open_browser(shop_id: str) -> bool:
     with get_db() as conn:
         row = conn.execute("SELECT id FROM shops WHERE id=?", (shop_id,)).fetchone()
     return row is not None
+
+
+def scan_desktop_windows() -> list[Shop]:
+    """
+    桌面窗口扫描占位实现。
+
+    后续实现方式：
+    1. 枚举所有顶层窗口 (EnumWindows)
+    2. 匹配标题: "千牛工作台"/"AliWorkbench" -> qianniu, "飞鸽"/"抖店" -> douyin
+    3. 记录 hwnd，提取店铺名
+    4. UPSERT 到 shops 表
+    5. 返回新发现的店铺列表
+    """
+    return []
 
 
 def get_shop_config(shop_id: str) -> ShopConfig | None:

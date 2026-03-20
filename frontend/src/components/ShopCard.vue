@@ -41,6 +41,11 @@
           </el-button>
         </el-tooltip>
         <el-button plain @click="emit('edit', shop.id)">编辑</el-button>
+        <el-popconfirm title="确认删除该店铺吗？" @confirm="emit('delete', shop.id)">
+          <template #reference>
+            <el-button plain type="danger">删除</el-button>
+          </template>
+        </el-popconfirm>
         <el-button :type="shop.isOnline ? 'danger' : 'primary'" @click="emit('toggleStatus', shop.id)">
           {{ shop.isOnline ? '停止' : '启动' }}
         </el-button>
@@ -60,6 +65,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  delete: [shopId: string];
   edit: [shopId: string];
   'open-browser': [shopId: string];
   toggleAi: [shopId: string, enabled: boolean];
@@ -77,14 +83,18 @@ const platformTagType = computed(() => {
   }
 });
 
-const lastActiveText = computed(() =>
-  new Date(props.shop.lastActiveAt).toLocaleString('zh-CN', {
+const lastActiveText = computed(() => {
+  if (!props.shop.lastActiveAt) {
+    return '暂无';
+  }
+
+  return new Date(props.shop.lastActiveAt).toLocaleString('zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-  }),
-);
+  });
+});
 
 function handleAiToggle(value: string | number | boolean): void {
   emit('toggleAi', props.shop.id, Boolean(value));

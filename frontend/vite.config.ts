@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => ({
     }),
     viteMockServe({
       mockPath: 'src/mock',
-      enable: mode === 'development',
+      enable: false,
     }),
   ],
   resolve: {

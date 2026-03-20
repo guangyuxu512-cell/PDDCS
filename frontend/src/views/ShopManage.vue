@@ -23,11 +23,31 @@
             </div>
           </template>
 
+          <div class="shop-manage__toolbar">
+            <template v-if="platform === 'pdd'">
+              <el-button round type="primary" @click="openAddDialog">添加店铺</el-button>
+            </template>
+            <template v-else>
+              <div class="shop-manage__scan-box">
+                <el-button
+                  plain
+                  type="primary"
+                  :loading="scanningWindows"
+                  @click="handleScanDesktopWindows"
+                >
+                  扫描桌面窗口
+                </el-button>
+                <span class="shop-manage__scan-tip">千牛/抖店店铺通过扫描本地桌面窗口自动发现</span>
+              </div>
+            </template>
+          </div>
+
           <div v-if="platformShops[platform].length" class="shop-manage__grid">
             <ShopCard
               v-for="shop in platformShops[platform]"
               :key="shop.id"
               :shop="shop"
+              @delete="handleDeleteShop"
               @edit="handleEdit"
               @open-browser="handleOpenBrowser"
               @toggle-ai="handleToggleAi"
@@ -39,9 +59,29 @@
       </el-tab-pane>
     </el-tabs>
 
-    <div class="shop-manage__footer">
-      <el-button round size="large" type="primary" @click="openAddDialog">添加店铺</el-button>
-    </div>
+    <el-dialog v-model="createDialogVisible" title="添加拼多多店铺" width="420px">
+      <el-form label-position="top">
+        <el-form-item label="店铺名称">
+          <el-input v-model="createForm.name" placeholder="请输入店铺名称" />
+        </el-form-item>
+        <el-form-item label="登录账号">
+          <el-input v-model="createForm.username" placeholder="请输入登录账号" />
+        </el-form-item>
+        <el-form-item label="登录密码">
+          <el-input
+            v-model="createForm.password"
+            placeholder="请输入登录密码"
+            show-password
+            type="password"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createDialogVisible = false">取消</el-button>
+        <el-button :loading="creatingShop" type="primary" @click="handleCreateShop">确认</el-button>
+      </template>
+    </el-dialog>
+
     <ShopEditDialog
       v-model="dialogVisible"
       :shop-id="selectedShopId"
@@ -52,9 +92,17 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 
-import { fetchShopList, openShopBrowser, toggleShopAi, toggleShopStatus } from '@/api/shop';
+import {
+  createShop,
+  deleteShop,
+  fetchShopList,
+  openShopBrowser,
+  scanDesktopWindows,
+  toggleShopAi,
+  toggleShopStatus,
+} from '@/api/shop';
 import ShopCard from '@/components/ShopCard.vue';
 import ShopEditDialog from '@/components/ShopEditDialog.vue';
 import { platformLabel, type Platform, type Shop } from '@/types/shop';
@@ -63,10 +111,18 @@ import type { ShopConfig } from '@/types/shopConfig';
 const platformOrder: Platform[] = ['pdd', 'douyin', 'qianniu'];
 
 const loading = ref(true);
+const creatingShop = ref(false);
+const scanningWindows = ref(false);
 const activePlatform = ref<Platform>('pdd');
 const shops = ref<Shop[]>([]);
+const createDialogVisible = ref(false);
 const dialogVisible = ref(false);
 const selectedShopId = ref<string | null>(null);
+const createForm = reactive({
+  name: '',
+  username: '',
+  password: '',
+});
 
 const platformShops = computed<Record<Platform, Shop[]>>(() => ({
   pdd: shops.value.filter((shop) => shop.platform === 'pdd'),
@@ -96,12 +152,37 @@ async function loadShops(): Promise<void> {
 }
 
 function openAddDialog(): void {
-  ElMessage.info('添加店铺功能待接入');
+  resetCreateForm();
+  createDialogVisible.value = true;
 }
 
 function handleEdit(shopId: string): void {
   selectedShopId.value = shopId;
   dialogVisible.value = true;
+}
+
+async function handleCreateShop(): Promise<void> {
+  if (!createForm.name.trim() || !createForm.username.trim() || !createForm.password.trim()) {
+    ElMessage.warning('请完整填写店铺信息');
+    return;
+  }
+
+  creatingShop.value = true;
+  try {
+    await createShop({
+      name: createForm.name.trim(),
+      platform: 'pdd',
+      username: createForm.username.trim(),
+      password: createForm.password,
+    });
+    createDialogVisible.value = false;
+    await loadShops();
+    ElMessage.success('店铺创建成功');
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '店铺创建失败');
+  } finally {
+    creatingShop.value = false;
+  }
 }
 
 async function handleToggleAi(shopId: string, enabled: boolean): Promise<void> {
@@ -122,6 +203,16 @@ async function handleToggleStatus(shopId: string): Promise<void> {
   }
 }
 
+async function handleDeleteShop(shopId: string): Promise<void> {
+  try {
+    await deleteShop(shopId);
+    await loadShops();
+    ElMessage.success('店铺已删除');
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '删除店铺失败');
+  }
+}
+
 async function handleOpenBrowser(shopId: string): Promise<void> {
   try {
     await openShopBrowser(shopId);
@@ -131,8 +222,32 @@ async function handleOpenBrowser(shopId: string): Promise<void> {
   }
 }
 
+async function handleScanDesktopWindows(): Promise<void> {
+  scanningWindows.value = true;
+  try {
+    const discoveredShops = await scanDesktopWindows();
+    if (discoveredShops.length) {
+      await loadShops();
+      ElMessage.success(`扫描完成，发现 ${discoveredShops.length} 个店铺窗口`);
+      return;
+    }
+
+    ElMessage.success('扫描完成，当前未发现可接管的桌面店铺窗口');
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '扫描桌面窗口失败');
+  } finally {
+    scanningWindows.value = false;
+  }
+}
+
 function replaceShop(updatedShop: Shop): void {
   shops.value = shops.value.map((shop) => (shop.id === updatedShop.id ? updatedShop : shop));
+}
+
+function resetCreateForm(): void {
+  createForm.name = '';
+  createForm.username = '';
+  createForm.password = '';
 }
 
 function handleConfigSaved(config: ShopConfig): void {
@@ -180,6 +295,25 @@ function handleConfigSaved(config: ShopConfig): void {
   gap: 16px;
 }
 
+.shop-manage__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.shop-manage__scan-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.shop-manage__scan-tip {
+  color: #5d6f86;
+  font-size: 14px;
+}
+
 .shop-manage__skeleton-card {
   border-radius: 24px;
 }
@@ -188,11 +322,6 @@ function handleConfigSaved(config: ShopConfig): void {
   display: flex;
   gap: 12px;
   margin: 16px 0;
-}
-
-.shop-manage__footer {
-  display: flex;
-  justify-content: center;
 }
 
 @media (max-width: 1180px) {
@@ -204,6 +333,12 @@ function handleConfigSaved(config: ShopConfig): void {
 @media (max-width: 720px) {
   .shop-manage__tabs {
     padding: 18px 16px;
+  }
+
+  .shop-manage__toolbar,
+  .shop-manage__scan-box {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .shop-manage__grid {
