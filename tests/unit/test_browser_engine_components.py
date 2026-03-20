@@ -25,7 +25,7 @@ class FakeCookieContext:
 
 
 class FakeGotoPage:
-    def __init__(self, final_url: str = "https://mms.pinduoduo.com/chat", should_raise: bool = False) -> None:
+    def __init__(self, final_url: str = "https://mms.pinduoduo.com/chat-merchant/#/", should_raise: bool = False) -> None:
         self.url = ""
         self._final_url = final_url
         self._should_raise = should_raise

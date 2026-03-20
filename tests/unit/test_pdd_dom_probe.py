@@ -77,12 +77,12 @@ class FakeProbePage:
 
 @pytest.mark.asyncio
 async def test_wait_for_any_selector_returns_true_when_fallback_matches() -> None:
-    page = FakeProbePage(success_selector=".session-list")
+    page = FakeProbePage(success_selector="[class*='chat-list']")
 
     matched = await _wait_for_any_selector(page, "session_list", timeout_ms=1000)
 
     assert matched is True
-    assert page.calls[:2] == [".chat-list", ".session-list"]
+    assert page.calls[:2] == ["ul:has(> li.chat-item)", "[class*='chat-list']"]
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ from collections.abc import Awaitable
 from datetime import datetime
 from typing import TypeVar
 
-from playwright.async_api import ElementHandle, Page, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import ElementHandle, Frame, Page, TimeoutError as PlaywrightTimeoutError
 
 from backend.adapters.base import BaseAdapter, RawMessage, SessionInfo
 from backend.adapters.selector_config import SelectorConfig
@@ -24,71 +24,56 @@ def _selector(primary: str, *fallbacks: str) -> SelectorConfig:
 
 
 SELECTORS: dict[str, SelectorConfig] = {
-    "session_list": _selector(".chat-list", ".session-list", "[class='chatList']", "[class='sessionList']"),
-    "session_item": _selector(
-        ".chat-list-item",
-        ".session-item",
-        "[class='chatListItem']",
-        "[class='sessionItem']",
+    "session_list": _selector(
+        "ul:has(> li.chat-item)",
+        "[class*='chat-list']",
     ),
+    "session_item": _selector("li.chat-item"),
     "buyer_name": _selector(
-        ".buyer-name",
-        ".nick-name",
-        "[class='buyerName']",
-        "[class='nickName']",
-        "[class*='userName']",
+        ".chat-detail .nickname-span",
+        ".chat-nickname .nickname-span",
     ),
     "last_message": _selector(
-        ".last-msg",
-        ".msg-preview",
-        "[class='lastMsg']",
-        "[class='msgPreview']",
+        ".chat-detail .chat-message-content",
+        ".bottom-message .chat-message-content",
     ),
-    "unread_badge": _selector(".unread-badge", ".badge", "[class='unread']", "[class='badge']"),
-    "message_container": _selector(
-        ".chat-content",
-        ".message-list",
-        "[class='chatContent']",
-        "[class='messageList']",
-        "[class*='msgList']",
+    "unread_badge": _selector(
+        ".chat-unreply-time",
+        "[class*='unread']",
     ),
-    "message_item": _selector(".msg-item", ".message-item", "[class='msgItem']", "[class='messageItem']"),
-    "message_text": _selector(
-        ".msg-text",
-        ".text-content",
-        "[class='msgText']",
-        "[class='textContent']",
-        "[class*='msgContent']",
+    "message_container": _selector(".merchantMessage"),
+    "message_item": _selector(
+        ".merchantMessage .buyer-item",
+        ".merchantMessage .seller-item",
+        ".merchantMessage .robot-item",
     ),
-    "message_sender_buyer": _selector(
-        ".buyer-msg",
-        ".msg-left",
-        "[class='buyerMsg']",
-        "[class='msgLeft']",
-        "[class*='receive']",
-    ),
+    "message_text": _selector(".msg-content-box"),
+    "message_index": _selector(".msg-content"),
+    "message_sender_buyer": _selector(".buyer-item"),
     "message_sender_self": _selector(
-        ".self-msg",
-        ".msg-right",
-        "[class='selfMsg']",
-        "[class='msgRight']",
-        "[class*='send']",
+        ".seller-item",
+        ".robot-item",
     ),
     "input_box": _selector(
-        ".chat-input textarea",
-        ".msg-input textarea",
-        "[class='chatInput'] textarea",
-        "[class='editorInner']",
-        "textarea[class*='input']",
+        "textarea#replyTextarea",
+        "textarea.custom-scroll",
     ),
-    "send_button": _selector(".send-btn", ".btn-send", "[class='sendBtn']", "button[class='send']"),
-    "transfer_button": _selector(".transfer-btn", "[class='transfer']", "[class='escalat']"),
-    "agent_select": _selector(".agent-list", "[class='agentList']", "[class='staffList']"),
-    "agent_item": _selector(".agent-item", "[class='agentItem']", "[class='staffItem']"),
+    "send_button": _selector(
+        "div.send-btn",
+        "[class='send-btn']",
+    ),
+    "transfer_button": _selector(
+        ".checkbox-transfer-btn",
+        ".transfer-chat-item-btn",
+    ),
+    "agent_select": _selector(".agent-list", "[class*='agentList']", "[class*='staffList']"),
+    "agent_item": _selector(".agent-item", "[class*='agentItem']", "[class*='staffItem']"),
 }
 PDD_CHAT_URL = "https://mms.pinduoduo.com/chat-merchant/#/"
 DEFAULT_TIMEOUT_SECONDS = 10.0
 T = TypeVar("T")
+SelectorScope = Page | Frame | ElementHandle
+ChatScope = Page | Frame
 
 
 async def _wait(awaitable: Awaitable[T], timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> T:
@@ -107,10 +92,11 @@ class PddAdapter(BaseAdapter):
         self._shop_id = shop_id
         self._human_simulator = human_simulator or HumanSimulator(page)
         self._current_session_id: str | None = None
+        self._chat_frame: ChatScope | None = None
 
     async def _query_selector(
         self,
-        scope: Page | ElementHandle,
+        scope: SelectorScope,
         selector_key: str,
     ) -> ElementHandle | None:
         for selector in SELECTORS[selector_key].all():
@@ -124,7 +110,7 @@ class PddAdapter(BaseAdapter):
 
     async def _query_selector_all(
         self,
-        scope: Page | ElementHandle,
+        scope: SelectorScope,
         selector_key: str,
     ) -> list[ElementHandle]:
         for selector in SELECTORS[selector_key].all():
@@ -153,10 +139,39 @@ class PddAdapter(BaseAdapter):
             raise last_error
         return None
 
+    async def _find_chat_frame(self) -> ChatScope:
+        """查找聊天消息所在的执行上下文（主页面或子 frame）。"""
+        try:
+            container = await _wait(
+                self._page.query_selector(SELECTORS["message_container"].primary),
+                timeout_seconds=3.0,
+            )
+            if container is not None:
+                logger.info("Chat messages found in main page")
+                return self._page
+        except Exception:
+            pass
+
+        for frame in self._page.frames:
+            try:
+                container = await _wait(
+                    frame.query_selector(SELECTORS["message_container"].primary),
+                    timeout_seconds=2.0,
+                )
+            except Exception:
+                continue
+            if container is not None:
+                logger.info("Chat messages found in frame: %s", frame.url)
+                return frame
+
+        logger.warning("merchantMessage not found in any frame, using main page")
+        return self._page
+
     async def navigate_to_chat(self) -> None:
         """导航到拼多多客服聊天页。"""
         if "mms.pinduoduo.com/chat-merchant" in self._page.url:
             logger.info("Already on PDD chat page")
+            self._chat_frame = await self._find_chat_frame()
             return
 
         logger.info("Navigating to %s", PDD_CHAT_URL)
@@ -169,6 +184,7 @@ class PddAdapter(BaseAdapter):
             logger.info("PDD chat page loaded, session list visible")
         except (PlaywrightTimeoutError, TimeoutError):
             logger.warning("Session list not found, manual login may be required")
+        self._chat_frame = await self._find_chat_frame()
 
     async def get_session_list(self) -> list[SessionInfo]:
         """读取左侧会话列表。"""
@@ -219,10 +235,26 @@ class PddAdapter(BaseAdapter):
         if self._current_session_id != session_id:
             await self.switch_to_session(session_id)
 
+        if self._chat_frame is None:
+            self._chat_frame = await self._find_chat_frame()
+
+        scope = self._chat_frame or self._page
+        if await self._query_selector(scope, "message_container") is None:
+            self._chat_frame = await self._find_chat_frame()
+            scope = self._chat_frame or self._page
+
         messages: list[RawMessage] = []
         now = datetime.now().isoformat()
-        items = await self._query_selector_all(self._page, "message_item")
-        for index, item in enumerate(items):
+        all_items: list[tuple[ElementHandle, str]] = []
+        for selector in (".buyer-item", ".seller-item", ".robot-item"):
+            try:
+                found = await _wait(scope.query_selector_all(selector), timeout_seconds=5.0)
+            except Exception:
+                continue
+            sender = "buyer" if "buyer" in selector else "human"
+            all_items.extend((item, sender) for item in found)
+
+        for index, (item, sender) in enumerate(all_items):
             try:
                 text_el = await self._query_selector(item, "message_text")
                 if text_el is None:
@@ -232,10 +264,13 @@ class PddAdapter(BaseAdapter):
                 if not content:
                     continue
 
-                is_buyer = await self._query_selector(item, "message_sender_buyer")
-                sender = "buyer" if is_buyer is not None else "human"
+                index_el = await self._query_selector(item, "message_index")
+                msg_index = ""
+                if index_el is not None:
+                    msg_index = (await _wait(index_el.get_attribute("index"))) or ""
+
                 content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()[:8]
-                dedup_key = f"{self._shop_id}:{session_id}:{index}:{content_hash}"
+                dedup_key = f"{self._shop_id}:{session_id}:{msg_index}:{content_hash}"
                 messages.append(
                     RawMessage(
                         session_id=session_id,
@@ -270,7 +305,7 @@ class PddAdapter(BaseAdapter):
             if send_button is not None:
                 await self._human_simulator.bezier_click(send_button)
             else:
-                await _wait(input_box.press("Enter"), timeout_seconds=2.0)
+                await _wait(input_box.press("Control+Enter"), timeout_seconds=2.0)
 
             await _wait(self._page.wait_for_timeout(500), timeout_seconds=1.5)
             logger.info("Sent message to %s: %s", session_id, text[:30])
@@ -320,6 +355,7 @@ class PddAdapter(BaseAdapter):
         logger.info("Waiting for manual login...")
         try:
             await self._wait_for_selector("session_list", timeout_ms=timeout_ms)
+            self._chat_frame = await self._find_chat_frame()
             logger.info("Login detected")
             return True
         except (PlaywrightTimeoutError, TimeoutError):

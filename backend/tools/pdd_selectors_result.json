@@ -7,7 +7,7 @@
   "session_item": {
     "selector": ".el-dialog__header",
     "method": "class",
-    "count": 165
+    "count": 190
   },
   "buyer_name": {
     "selector": "",
@@ -27,7 +27,7 @@
   "message_container": {
     "selector": ".bottom-message",
     "method": "class",
-    "count": 49
+    "count": 47
   },
   "message_item": {
     "selector": "",
@@ -35,9 +35,9 @@
     "count": 0
   },
   "message_text": {
-    "selector": ".click-text",
+    "selector": ".robot-text",
     "method": "class",
-    "count": 1
+    "count": 8
   },
   "message_sender_buyer": {
     "selector": "",
@@ -50,9 +50,9 @@
     "count": 0
   },
   "input_box": {
-    "selector": "",
-    "method": "not_found",
-    "count": 0
+    "selector": ".custom-scroll",
+    "method": "class",
+    "count": 4
   },
   "send_button": {
     "selector": "[aria-label='发送定制咨询卡片']",
@@ -67,6 +67,6 @@
   "_raw_html_snippets": {
     "session_item_sample": "<div class=\"el-dialog__header\"><span class=\"el-dialog__title\">添加会话</span><button type=\"button\" aria-label=\"Close\" class=\"el-dialog__headerbtn\"><i class=\"el-dialog__close el-icon el-icon-close\"></i></button></div>",
     "message_item_sample": "",
-    "input_area_sample": ""
+    "input_area_sample": "<div data-v-79c91d38=\"\" class=\"textarea-rect\"><textarea data-v-79c91d38=\"\" id=\"replyTextarea\" class=\"custom-scroll\"></textarea> <!----></div>"
   }
 }
