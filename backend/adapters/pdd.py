@@ -92,6 +92,23 @@ SELECTORS: dict[str, SelectorConfig] = {
         "input[placeholder*='验证码']",
         "input[placeholder*='短信']",
     ),
+    "popup_dismiss_today": _selector(
+        "a:has-text('今天不再提示')",
+        "span:has-text('今天不再提示')",
+        "div:has-text('今天不再提示') >> visible=true",
+    ),
+    "popup_dismiss_ok": _selector(
+        "button:has-text('我知道了')",
+        "a:has-text('我知道了')",
+        "div.btn:has-text('我知道了')",
+    ),
+    "popup_close_icon": _selector(
+        ".modal-close",
+        ".popup-close",
+        "[class*='close-btn']",
+        "[class*='closeBtn']",
+        ".ant-modal-close",
+    ),
 }
 PDD_CHAT_URL = "https://mms.pinduoduo.com/chat-merchant/#/"
 PDD_LOGIN_URL = "https://mms.pinduoduo.com/login/"
@@ -228,16 +245,25 @@ class PddAdapter(BaseAdapter):
             self._chat_frame = await self._find_chat_frame()
             return
 
-        logger.info("[%s] Navigating to %s", self._shop_id, PDD_CHAT_URL)
+        is_on_login_page = await self._is_on_login_page()
+        target_url = PDD_LOGIN_URL if (username and password and not is_on_login_page) else PDD_CHAT_URL
+        logger.info("[%s] Navigating to %s", self._shop_id, target_url)
         try:
             await _wait(
-                self._page.goto(PDD_CHAT_URL, wait_until="domcontentloaded", timeout=30000),
+                self._page.goto(target_url, wait_until="domcontentloaded", timeout=30000),
                 timeout_seconds=35.0,
             )
         except Exception as exc:
-            logger.warning("[%s] Navigation to chat page failed: %s", self._shop_id, exc)
+            logger.warning("[%s] Navigation to %s failed: %s", self._shop_id, target_url, exc)
 
-        await _wait(self._page.wait_for_timeout(3000), timeout_seconds=5.0)
+        try:
+            await _wait(
+                self._page.wait_for_load_state("load", timeout=15000),
+                timeout_seconds=18.0,
+            )
+        except Exception:
+            pass
+        await _wait(self._page.wait_for_timeout(2000), timeout_seconds=4.0)
 
         if await self._is_on_login_page():
             if username and password:
@@ -264,7 +290,51 @@ class PddAdapter(BaseAdapter):
         except (PlaywrightTimeoutError, TimeoutError):
             logger.warning("[%s] Session list not found after navigation", self._shop_id)
 
+        await self.dismiss_popups()
         self._chat_frame = await self._find_chat_frame()
+
+    async def dismiss_popups(self, max_rounds: int = 3) -> int:
+        """
+        检测并关闭 PDD 商家后台的通知/推广弹窗。
+
+        最多执行 max_rounds 轮（每轮检测所有已知弹窗类型），
+        返回总共关闭的弹窗数量。
+        """
+        total_dismissed = 0
+        dismiss_keys = ("popup_dismiss_today", "popup_dismiss_ok", "popup_close_icon")
+
+        for round_num in range(max_rounds):
+            dismissed_this_round = 0
+
+            for key in dismiss_keys:
+                try:
+                    element = await self._query_selector(self._page, key)
+                    if element is None:
+                        continue
+
+                    visible = await _wait(element.is_visible(), timeout_seconds=2.0)
+                    if not visible:
+                        continue
+
+                    await _wait(element.click(), timeout_seconds=3.0)
+                    dismissed_this_round += 1
+                    total_dismissed += 1
+                    logger.info(
+                        "[%s] Dismissed popup (selector=%s, round=%d)",
+                        self._shop_id,
+                        key,
+                        round_num + 1,
+                    )
+                    await _wait(self._page.wait_for_timeout(800), timeout_seconds=2.0)
+                except Exception as exc:
+                    logger.debug("[%s] Popup dismiss attempt failed for %s: %s", self._shop_id, key, exc)
+
+            if dismissed_this_round == 0:
+                break
+
+        if total_dismissed > 0:
+            logger.info("[%s] Total popups dismissed: %d", self._shop_id, total_dismissed)
+        return total_dismissed
 
     async def auto_login(self, username: str, password: str, timeout_ms: int = 120000) -> bool:
         """
@@ -289,22 +359,55 @@ class PddAdapter(BaseAdapter):
             except Exception as exc:
                 logger.error("[%s] Failed to navigate to login page: %s", self._shop_id, exc)
                 return False
-
-        await _wait(self._page.wait_for_timeout(2000), timeout_seconds=5.0)
+            try:
+                await _wait(
+                    self._page.wait_for_load_state("load", timeout=15000),
+                    timeout_seconds=18.0,
+                )
+            except Exception:
+                logger.warning("[%s] Login page load state wait timed out", self._shop_id)
 
         try:
-            tab = await self._query_selector(self._page, "login_tab_account")
-            if tab is not None:
-                await self._human_simulator.bezier_click(tab)
-                await _wait(self._page.wait_for_timeout(1000), timeout_seconds=3.0)
-                logger.info("[%s] Clicked '账号登录' tab", self._shop_id)
-            else:
-                logger.info("[%s] '账号登录' tab not found, may already be on account login", self._shop_id)
+            await _wait(
+                self._page.wait_for_load_state("load", timeout=15000),
+                timeout_seconds=18.0,
+            )
+        except Exception:
+            logger.warning("[%s] wait_for_load_state('load') timed out, continuing anyway", self._shop_id)
+        await _wait(self._page.wait_for_timeout(1000), timeout_seconds=3.0)
+
+        tab: ElementHandle | None = None
+        try:
+            tab = await self._wait_for_selector("login_tab_account", timeout_ms=15000)
+        except (PlaywrightTimeoutError, TimeoutError):
+            logger.warning("[%s] '账号登录' tab wait timed out, falling back to direct query", self._shop_id)
+            try:
+                tab = await self._query_selector(self._page, "login_tab_account")
+            except Exception as exc:
+                logger.warning("[%s] Failed to query login tab after wait timeout: %s", self._shop_id, exc)
         except Exception as exc:
             logger.warning("[%s] Failed to click login tab: %s", self._shop_id, exc)
 
+        if tab is not None:
+            try:
+                await self._human_simulator.bezier_click(tab)
+                logger.info("[%s] Clicked '账号登录' tab", self._shop_id)
+                try:
+                    await self._wait_for_selector("login_username", timeout_ms=8000)
+                    logger.info("[%s] Account login form visible after tab click", self._shop_id)
+                except (PlaywrightTimeoutError, TimeoutError):
+                    logger.warning("[%s] Username field not visible after first tab click, retrying...", self._shop_id)
+                    tab_retry = await self._query_selector(self._page, "login_tab_account")
+                    if tab_retry is not None:
+                        await self._human_simulator.bezier_click(tab_retry)
+                        await _wait(self._page.wait_for_timeout(2000), timeout_seconds=4.0)
+            except Exception as exc:
+                logger.warning("[%s] Failed to click login tab: %s", self._shop_id, exc)
+        else:
+            logger.warning("[%s] '账号登录' tab not found after 15s wait", self._shop_id)
+
         try:
-            username_input = await self._wait_for_selector("login_username", timeout_ms=5000)
+            username_input = await self._wait_for_selector("login_username", timeout_ms=15000)
             if username_input is None:
                 logger.error("[%s] Username input (#usernameId) not found", self._shop_id)
                 return False
@@ -318,7 +421,7 @@ class PddAdapter(BaseAdapter):
             return False
 
         try:
-            password_input = await self._wait_for_selector("login_password", timeout_ms=5000)
+            password_input = await self._wait_for_selector("login_password", timeout_ms=10000)
             if password_input is None:
                 logger.error("[%s] Password input (#passwordId) not found", self._shop_id)
                 return False
@@ -332,7 +435,7 @@ class PddAdapter(BaseAdapter):
             return False
 
         try:
-            login_btn = await self._wait_for_selector("login_button", timeout_ms=5000)
+            login_btn = await self._wait_for_selector("login_button", timeout_ms=10000)
             if login_btn is None:
                 logger.error("[%s] Login button not found", self._shop_id)
                 return False

@@ -382,6 +382,17 @@ class ShopScheduler:
                             last_memory_cleanup_time = now
 
                         try:
+                            if poll_count % 10 == 0:
+                                try:
+                                    dismiss_fn = getattr(adapter, "dismiss_popups", None)
+                                    if callable(dismiss_fn):
+                                        await _wait(
+                                            dismiss_fn(max_rounds=1),
+                                            timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS,
+                                        )
+                                except Exception:
+                                    logger.debug("[%s] Periodic popup dismiss failed", shop_id)
+
                             shop_config, llm_client = _load_runtime_configuration(shop_id)
                             sessions = await _wait(
                                 adapter.get_session_list(),
