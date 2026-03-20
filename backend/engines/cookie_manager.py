@@ -13,7 +13,7 @@ from playwright.async_api import BrowserContext, Page
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
-PDD_CHAT_URL = "https://mms.pinduoduo.com/chat"
+PDD_CHAT_URL = "https://mms.pinduoduo.com/chat-merchant/#/"
 
 
 async def _wait(awaitable: Any, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> Any:

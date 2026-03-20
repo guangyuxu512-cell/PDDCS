@@ -86,7 +86,7 @@ SELECTORS: dict[str, SelectorConfig] = {
     "agent_select": _selector(".agent-list", "[class='agentList']", "[class='staffList']"),
     "agent_item": _selector(".agent-item", "[class='agentItem']", "[class='staffItem']"),
 }
-PDD_CHAT_URL = "https://mms.pinduoduo.com/chat"
+PDD_CHAT_URL = "https://mms.pinduoduo.com/chat-merchant/#/"
 DEFAULT_TIMEOUT_SECONDS = 10.0
 T = TypeVar("T")
 
@@ -155,7 +155,7 @@ class PddAdapter(BaseAdapter):
 
     async def navigate_to_chat(self) -> None:
         """导航到拼多多客服聊天页。"""
-        if "mms.pinduoduo.com/chat" in self._page.url:
+        if "mms.pinduoduo.com/chat-merchant" in self._page.url:
             logger.info("Already on PDD chat page")
             return
 

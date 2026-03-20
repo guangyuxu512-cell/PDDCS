@@ -1,0 +1,72 @@
+{
+  "session_list": {
+    "selector": "[aria-label='添加会话']",
+    "method": "aria-label",
+    "count": 1
+  },
+  "session_item": {
+    "selector": ".el-dialog__header",
+    "method": "class",
+    "count": 165
+  },
+  "buyer_name": {
+    "selector": "",
+    "method": "not_found",
+    "count": 0
+  },
+  "last_message": {
+    "selector": "",
+    "method": "not_found",
+    "count": 0
+  },
+  "unread_badge": {
+    "selector": "",
+    "method": "not_found",
+    "count": 0
+  },
+  "message_container": {
+    "selector": ".bottom-message",
+    "method": "class",
+    "count": 49
+  },
+  "message_item": {
+    "selector": "",
+    "method": "not_found",
+    "count": 0
+  },
+  "message_text": {
+    "selector": ".click-text",
+    "method": "class",
+    "count": 1
+  },
+  "message_sender_buyer": {
+    "selector": "",
+    "method": "not_found",
+    "count": 0
+  },
+  "message_sender_self": {
+    "selector": "",
+    "method": "not_found",
+    "count": 0
+  },
+  "input_box": {
+    "selector": "",
+    "method": "not_found",
+    "count": 0
+  },
+  "send_button": {
+    "selector": "[aria-label='发送定制咨询卡片']",
+    "method": "aria-label",
+    "count": 1
+  },
+  "transfer_button": {
+    "selector": ".checkbox-transfer-btn",
+    "method": "class",
+    "count": 1
+  },
+  "_raw_html_snippets": {
+    "session_item_sample": "<div class=\"el-dialog__header\"><span class=\"el-dialog__title\">添加会话</span><button type=\"button\" aria-label=\"Close\" class=\"el-dialog__headerbtn\"><i class=\"el-dialog__close el-icon el-icon-close\"></i></button></div>",
+    "message_item_sample": "",
+    "input_area_sample": ""
+  }
+}
