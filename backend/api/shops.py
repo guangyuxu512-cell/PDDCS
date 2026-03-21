@@ -142,10 +142,11 @@ async def api_start_shop(shop_id: str) -> dict[str, Any]:
 @router.post("/shops/{shop_id}/stop")
 async def api_stop_shop(shop_id: str) -> dict[str, Any]:
     stopped = await stop_shop(shop_id)
-    if not stopped:
+    if not _set_shop_online_status(shop_id, False):
         return fail("店铺未在运行")
 
-    _set_shop_online_status(shop_id, False)
+    if not stopped:
+        logger.info("[%s] Shop task already finished, DB status cleaned up", shop_id)
     return ok(None)
 
 

@@ -56,6 +56,13 @@ async def _sleep(seconds: float) -> None:
     await _wait(asyncio.sleep(seconds), timeout_seconds=seconds + 1.0)
 
 
+async def _is_shop_context_alive(shop_id: str) -> bool:
+    checker = getattr(engine, "is_context_alive", None)
+    if not callable(checker):
+        return True
+    return bool(await _wait(checker(shop_id), timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS))
+
+
 def _get_shop_platform(shop_id: str) -> str | None:
     with get_db() as conn:
         row = conn.execute("SELECT platform FROM shops WHERE id=?", (shop_id,)).fetchone()
@@ -182,6 +189,12 @@ class ShopScheduler:
             logger.info("[%s] Shop task cancelled", shop_id)
         except Exception:
             logger.exception("[%s] Shop task crashed", shop_id)
+
+        try:
+            _update_shop_status(shop_id, is_online=False)
+            logger.info("[%s] DB status set to offline after task completion", shop_id)
+        except Exception:
+            logger.exception("[%s] Failed to update DB status in _on_task_done", shop_id)
 
     async def _is_adapter_logged_in(self, adapter: BaseAdapter) -> bool:
         checker = getattr(adapter, "is_logged_in", None)
@@ -336,6 +349,22 @@ class ShopScheduler:
                         poll_count += 1
                         now = loop.time()
 
+                        if not await _is_shop_context_alive(shop_id):
+                            context_exists = _get_shop_context(shop_id) is not None
+                            if not context_exists:
+                                logger.warning(
+                                    "[%s] Browser context closed externally, stopping gracefully",
+                                    shop_id,
+                                )
+                                _update_shop_status(shop_id, is_online=False, cookie_valid=False)
+                                return
+
+                            logger.warning(
+                                "[%s] Browser context alive but page is dead, triggering crash recovery",
+                                shop_id,
+                            )
+                            raise RuntimeError("Page dead, need crash recovery")
+
                         if poll_count % DEFAULT_LOGIN_CHECK_INTERVAL == 0:
                             still_logged_in = await self._is_adapter_logged_in(adapter)
                             if not still_logged_in:
@@ -436,6 +465,15 @@ class ShopScheduler:
                         _update_shop_status(shop_id, is_online=False, cookie_valid=False)
                         return
 
+                    contexts = getattr(engine, "_contexts", None)
+                    if isinstance(contexts, dict) and shop_id not in contexts:
+                        logger.warning(
+                            "[%s] Browser context gone during crash recovery, stopping gracefully",
+                            shop_id,
+                        )
+                        _update_shop_status(shop_id, is_online=False, cookie_valid=False)
+                        return
+
                     try:
                         proxy = _get_shop_proxy(shop_id)
                         await _wait(
@@ -476,6 +514,10 @@ class ShopScheduler:
     async def stop_shop(self, shop_id: str) -> bool:
         task = self._running_tasks.pop(shop_id, None)
         if task is None:
+            try:
+                await _wait(engine.close_shop(shop_id), timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS)
+            except Exception:
+                logger.debug("[%s] No browser context to clean up while stopping", shop_id)
             return False
 
         task.cancel()
@@ -483,6 +525,16 @@ class ShopScheduler:
             await _wait(task, timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS)
         except asyncio.CancelledError:
             pass
+        except (asyncio.TimeoutError, TimeoutError):
+            logger.warning("[%s] Task cancel timed out, force-closing browser context", shop_id)
+            try:
+                await _wait(engine.close_shop(shop_id), timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS)
+            except Exception:
+                logger.exception("[%s] Force close_shop failed", shop_id)
+        except Exception:
+            logger.exception("[%s] Task finished with error while stopping", shop_id)
+
+        _update_shop_status(shop_id, is_online=False)
 
         if not self.get_running_shops() and engine.is_running:
             try:
