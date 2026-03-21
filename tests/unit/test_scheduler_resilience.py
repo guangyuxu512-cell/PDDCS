@@ -102,10 +102,12 @@ async def test_process_session_sends_reply_message(monkeypatch: pytest.MonkeyPat
         shop_id: str,
         raw_msg: RawMessage,
         llm_client: object,
+        ai_enabled: bool = True,
     ) -> SimpleNamespace:
         assert shop_id == "shop-1"
         assert raw_msg is buyer_message
         assert llm_client is not None
+        assert ai_enabled is True
         return SimpleNamespace(action="reply", reply_text="今天发货", session_id="session-1")
 
     fake_adapter = FakeAdapter()
@@ -115,7 +117,7 @@ async def test_process_session_sends_reply_message(monkeypatch: pytest.MonkeyPat
         "shop-1",
         fake_adapter,
         session_info,
-        {},
+        {"ai_enabled": True},
         object(),
     )
 
@@ -165,10 +167,12 @@ async def test_process_session_triggers_escalation_with_fallback(
         shop_id: str,
         raw_msg: RawMessage,
         llm_client: object,
+        ai_enabled: bool = True,
     ) -> SimpleNamespace:
         assert shop_id == "shop-1"
         assert raw_msg is buyer_message
         assert llm_client is not None
+        assert ai_enabled is True
         return SimpleNamespace(action="escalate", session_id="session-1")
 
     fake_adapter = FakeAdapter()
@@ -178,12 +182,72 @@ async def test_process_session_triggers_escalation_with_fallback(
         "shop-1",
         fake_adapter,
         session_info,
-        {"escalation_fallback_msg": "为您转人工处理", "human_agent_name": "客服A"},
+        {"ai_enabled": True, "escalation_fallback_msg": "为您转人工处理", "human_agent_name": "客服A"},
         object(),
     )
 
     assert fake_adapter.sent_messages == [("session-1", "为您转人工处理")]
     assert fake_adapter.escalations == [("session-1", "客服A")]
+
+
+@pytest.mark.asyncio
+async def test_process_session_stores_message_without_reply_when_ai_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shop_scheduler = scheduler.ShopScheduler()
+    session_info = SessionInfo(session_id="session-1", buyer_id="buyer-1", buyer_name="买家A")
+    buyer_message = RawMessage(
+        session_id="session-1",
+        buyer_id="buyer-1",
+        buyer_name="买家A",
+        content="只入库不回复",
+        sender="buyer",
+        timestamp="2026-03-21T12:00:00",
+        dedup_key="dedup-store-only",
+    )
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.sent_messages: list[tuple[str, str]] = []
+
+        async def switch_to_session(self, session_id: str) -> None:
+            assert session_id == "session-1"
+
+        async def fetch_messages(self, session_id: str) -> list[RawMessage]:
+            assert session_id == "session-1"
+            return [buyer_message]
+
+        async def send_message(self, session_id: str, text: str) -> bool:
+            self.sent_messages.append((session_id, text))
+            return True
+
+        async def trigger_escalation(self, session_id: str, target_agent: str) -> bool:
+            raise AssertionError("trigger_escalation should not be called when AI is disabled")
+
+    async def fake_process_buyer_message(
+        shop_id: str,
+        raw_msg: RawMessage,
+        llm_client: object,
+        ai_enabled: bool = True,
+    ) -> SimpleNamespace:
+        assert shop_id == "shop-1"
+        assert raw_msg is buyer_message
+        assert llm_client is not None
+        assert ai_enabled is False
+        return SimpleNamespace(action="stored", session_id="session-1")
+
+    fake_adapter = FakeAdapter()
+    monkeypatch.setattr(scheduler, "process_buyer_message", fake_process_buyer_message)
+
+    await shop_scheduler._process_session(
+        "shop-1",
+        fake_adapter,
+        session_info,
+        {"ai_enabled": False},
+        object(),
+    )
+
+    assert fake_adapter.sent_messages == []
 
 
 @pytest.mark.asyncio
@@ -396,3 +460,25 @@ async def test_start_all_online_shops_starts_shops_concurrently(
 
     assert set(started_shop_ids) == {"shop-1", "shop-2"}
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_start_all_online_shops_includes_ai_disabled_shop(
+    isolated_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_database
+    _insert_shop("shop-2", ai_enabled=0)
+    shop_scheduler = scheduler.ShopScheduler()
+    started_shop_ids: list[str] = []
+
+    async def fake_start_shop(shop_id: str) -> bool:
+        started_shop_ids.append(shop_id)
+        return True
+
+    monkeypatch.setattr(shop_scheduler, "start_shop", fake_start_shop)
+
+    count = await shop_scheduler.start_all_online_shops()
+
+    assert set(started_shop_ids) == {"shop-1", "shop-2"}
+    assert count == 2

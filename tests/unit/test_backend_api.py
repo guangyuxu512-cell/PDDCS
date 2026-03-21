@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.api import settings as settings_api
 from backend.api import shops as shops_api
 from backend.db import database
 from backend.main import app
@@ -215,6 +216,7 @@ def test_shop_endpoints_cover_listing_updates_and_missing_shop(
 
 def test_dashboard_chat_knowledge_and_settings_endpoints_cover_normal_and_error_paths(
     client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dashboard_response = client.get("/api/dashboard/summary")
     dashboard_payload = dashboard_response.json()
@@ -279,6 +281,7 @@ def test_dashboard_chat_knowledge_and_settings_endpoints_cover_normal_and_error_
     settings_payload = settings_response.json()["data"]
     assert settings_payload["temperature"] == 0.7
     assert settings_payload["defaultKeywords"] == []
+    assert settings_payload["notifyWebhookType"] == "feishu"
 
     save_settings_response = client.put(
         "/api/settings",
@@ -292,7 +295,8 @@ def test_dashboard_chat_knowledge_and_settings_endpoints_cover_normal_and_error_
             "defaultKeywords": ["退款", "售后"],
             "logLevel": "DEBUG",
             "historyRetentionDays": 15,
-            "alertWebhookUrl": "https://example.com/webhook",
+            "notifyWebhookUrl": "https://example.com/webhook",
+            "notifyWebhookType": "wecom",
             "maxShops": 20,
         },
     )
@@ -300,6 +304,8 @@ def test_dashboard_chat_knowledge_and_settings_endpoints_cover_normal_and_error_
     assert saved_settings["defaultKeywords"] == ["退款", "售后"]
     assert saved_settings["maxTokens"] == 512
     assert saved_settings["temperature"] == 0.2
+    assert saved_settings["notifyWebhookUrl"] == "https://example.com/webhook"
+    assert saved_settings["notifyWebhookType"] == "wecom"
 
     test_llm_success = client.post(
         "/api/settings/test-llm",
@@ -312,3 +318,69 @@ def test_dashboard_chat_knowledge_and_settings_endpoints_cover_normal_and_error_
         json={"apiBaseUrl": "https://api.openai.com", "apiKey": "sk-test", "model": ""},
     )
     assert test_llm_failure.json()["data"] == {"ok": False, "message": "参数不完整"}
+
+    webhook_calls: list[dict[str, str]] = []
+
+    async def fake_send_notification(
+        title: str,
+        content: str,
+        level: str = "warning",
+        *,
+        url: str | None = None,
+        webhook_type: str | None = None,
+        event_key: str | None = None,
+        dedupe: bool = True,
+    ) -> bool:
+        webhook_calls.append(
+            {
+                "title": title,
+                "content": content,
+                "level": level,
+                "url": url or "",
+                "webhook_type": webhook_type or "",
+                "event_key": event_key or "",
+                "dedupe": str(dedupe),
+            }
+        )
+        return True
+
+    monkeypatch.setattr(settings_api, "send_notification", fake_send_notification)
+    test_webhook_success = client.post(
+        "/api/settings/test-webhook",
+        json={"url": "https://example.com/hooks/test", "webhookType": "dingtalk"},
+    )
+    assert test_webhook_success.json()["data"] == {"ok": True, "message": "发送成功"}
+    assert webhook_calls == [
+        {
+            "title": "PDDCS 通知测试",
+            "content": "这是一条来自系统设置页的测试通知。",
+            "level": "info",
+            "url": "https://example.com/hooks/test",
+            "webhook_type": "dingtalk",
+            "event_key": "",
+            "dedupe": "False",
+        }
+    ]
+
+    async def fake_failed_notification(
+        title: str,
+        content: str,
+        level: str = "warning",
+        *,
+        url: str | None = None,
+        webhook_type: str | None = None,
+        event_key: str | None = None,
+        dedupe: bool = True,
+    ) -> bool:
+        del title, content, level, url, webhook_type, event_key, dedupe
+        return False
+
+    monkeypatch.setattr(settings_api, "send_notification", fake_failed_notification)
+    test_webhook_failure = client.post(
+        "/api/settings/test-webhook",
+        json={"url": "https://example.com/hooks/test", "webhookType": "generic"},
+    )
+    assert test_webhook_failure.json()["data"] == {
+        "ok": False,
+        "message": "发送失败，请检查 Webhook URL 或网络状态",
+    }

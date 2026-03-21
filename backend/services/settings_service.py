@@ -37,13 +37,21 @@ def get_settings() -> SystemSettings:
         else:
             raw[key] = value
 
+    if "notifyWebhookUrl" not in raw and "alertWebhookUrl" in raw:
+        raw["notifyWebhookUrl"] = raw["alertWebhookUrl"]
+    raw.setdefault("notifyWebhookType", "feishu")
+
     return SystemSettings.model_validate(raw)
 
 
 def save_settings(body: dict[str, Any]) -> SystemSettings:
     now = datetime.now().isoformat()
+    normalized_body = dict(body)
+    if "notifyWebhookUrl" in normalized_body and "alertWebhookUrl" not in normalized_body:
+        normalized_body["alertWebhookUrl"] = normalized_body["notifyWebhookUrl"]
+
     with get_sync_session() as session:
-        for key, value in body.items():
+        for key, value in normalized_body.items():
             row = session.get(SystemSettingTable, key)
             if row is None:
                 row = SystemSettingTable(key=key, value="", updated_at=now)

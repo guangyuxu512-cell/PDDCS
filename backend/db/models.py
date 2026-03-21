@@ -35,6 +35,7 @@ ChatSessionStatus = Literal["ai_processing", "escalated", "closed"]
 ChatMessageSender = Literal["buyer", "ai", "human"]
 KnowledgeNodeType = Literal["folder", "file"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+WebhookType = Literal["feishu", "dingtalk", "wecom", "generic"]
 
 
 class Shop(CamelModel):
@@ -143,7 +144,8 @@ class SystemSettings(CamelModel):
     default_keywords: list[str] = Field(default_factory=list)
     log_level: LogLevel = "INFO"
     history_retention_days: int = 30
-    alert_webhook_url: str = ""
+    notify_webhook_url: str = ""
+    notify_webhook_type: WebhookType = "feishu"
     max_shops: int = 10
 
     @model_validator(mode="before")

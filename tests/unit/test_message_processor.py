@@ -201,3 +201,37 @@ async def test_process_buyer_message_triggers_escalation_without_calling_llm(iso
     assert escalation_row["trigger_rule_type"] == "keyword"
     assert escalation_row["target_agent"] == "客服A"
     assert escalation_row["success"] == 0
+
+
+@pytest.mark.asyncio
+async def test_process_buyer_message_only_stores_buyer_message_when_ai_disabled(
+    isolated_database: Path,
+) -> None:
+    del isolated_database
+    _seed_shop()
+    raw_message = RawMessage(
+        session_id="buyer-4",
+        buyer_id="buyer-4",
+        buyer_name="买家丁",
+        content="AI 关闭时也要保存",
+        sender="buyer",
+        timestamp="2026-03-20T10:15:00",
+        dedup_key="dedup-store-only",
+    )
+
+    result = await process_buyer_message(
+        "shop-1",
+        raw_message,
+        _NeverCalledLlmClient(),  # type: ignore[arg-type]
+        ai_enabled=False,
+    )
+
+    assert result.action == "stored"
+
+    with database.get_db() as conn:
+        message_rows = conn.execute(
+            "SELECT sender, content FROM messages WHERE session_id=? ORDER BY created_at ASC",
+            (result.session_id,),
+        ).fetchall()
+
+    assert [(row["sender"], row["content"]) for row in message_rows] == [("buyer", "AI 关闭时也要保存")]

@@ -85,7 +85,9 @@ def test_shop_dialog_enhancement_contracts() -> None:
         settings_api,
         [
             "testLlmConnection",
+            "testWebhook",
             "request.post<ApiResponse<{ ok: boolean; message: string }>>('/settings/test-llm', params)",
+            "request.post<ApiResponse<{ ok: boolean; message: string }>>('/settings/test-webhook', params)",
         ],
         "api/settings.ts",
     )
@@ -113,8 +115,10 @@ def test_shop_dialog_enhancement_contracts() -> None:
         settings_mock,
         [
             "url: '/api/settings/test-llm'",
+            "url: '/api/settings/test-webhook'",
             "setTimeout(resolve, 1000)",
             "LLM 连接测试成功，模型响应正常",
+            "发送成功",
         ],
         "mock/settings.ts",
     )
@@ -184,6 +188,9 @@ def test_shop_dialog_enhancement_contracts() -> None:
             "handleTestConnection",
             "testingConnection",
             "testLlmConnection",
+            "handleTestWebhook",
+            "testingWebhook",
+            "testWebhook",
             "连接失败:",
             "LLM 连接测试成功，模型响应正常",
         ],

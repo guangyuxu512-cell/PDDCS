@@ -99,6 +99,8 @@ INSERT OR IGNORE INTO system_settings (key, value) VALUES
     ('logLevel',             'INFO'),
     ('historyRetentionDays', '30'),
     ('alertWebhookUrl',      ''),
+    ('notifyWebhookUrl',     ''),
+    ('notifyWebhookType',    'feishu'),
     ('maxShops',             '10');
 
 CREATE TABLE IF NOT EXISTS escalation_logs (

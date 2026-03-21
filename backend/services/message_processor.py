@@ -290,12 +290,16 @@ async def process_buyer_message(
     shop_id: str,
     raw_msg: RawMessage,
     llm_client: LlmClient,
+    ai_enabled: bool = True,
 ) -> ProcessResult:
     session_row = _get_or_create_session(shop_id, raw_msg)
     session_id = session_row.id
     message_id = _save_message(session_id, raw_msg)
     if message_id is None:
         return ProcessResult(action="skip", session_id=session_id)
+
+    if not ai_enabled:
+        return ProcessResult(action="stored", session_id=session_id, message_id=message_id)
 
     shop_config = _get_shop_config(shop_id)
     recent_messages = _get_recent_messages(session_id, limit=20)

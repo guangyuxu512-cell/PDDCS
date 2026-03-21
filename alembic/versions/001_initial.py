@@ -26,6 +26,8 @@ SYSTEM_SETTINGS_DEFAULTS: dict[str, str] = {
     "logLevel": "INFO",
     "historyRetentionDays": "30",
     "alertWebhookUrl": "",
+    "notifyWebhookUrl": "",
+    "notifyWebhookType": "feishu",
     "maxShops": "10",
 }
 

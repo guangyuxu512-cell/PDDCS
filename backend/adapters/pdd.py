@@ -14,6 +14,7 @@ from playwright.async_api import ElementHandle, Frame, Page, TimeoutError as Pla
 from backend.adapters.base import BaseAdapter, RawMessage, SessionInfo
 from backend.adapters.selector_config import SelectorConfig
 from backend.engines.human_simulator import HumanSimulator
+from backend.services.notifier import send_notification
 
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,39 @@ SELECTORS: dict[str, SelectorConfig] = {
         "input[placeholder='请输入短信验证码']",
         "input[placeholder*='验证码']",
         "input[placeholder*='短信']",
+    ),
+    "session_timeout_hint": _selector(
+        "div:has-text('网络异常')",
+        "div:has-text('请刷新页面')",
+        "div:has-text('页面已过期')",
+        "div:has-text('连接已断开')",
+        ".network-error",
+        ".page-expired",
+    ),
+    "session_timeout_refresh_btn": _selector(
+        "button:has-text('刷新')",
+        "button:has-text('重新加载')",
+        "a:has-text('刷新页面')",
+    ),
+    "online_status_indicator": _selector(
+        ".online-status",
+        "[class*='onlineStatus']",
+        "[class*='service-status']",
+        ".status-indicator",
+    ),
+    "online_status_text": _selector(
+        ".online-status-text",
+        "[class*='statusText']",
+        "span:has-text('在线')",
+        "span:has-text('离线')",
+        "span:has-text('忙碌')",
+    ),
+    "online_switch_button": _selector(
+        ".online-switch",
+        "[class*='onlineSwitch']",
+        "button:has-text('上线')",
+        "button:has-text('恢复在线')",
+        ".status-toggle",
     ),
     "popup_dismiss_today": _selector(
         "a:has-text('今天不再提示')",
@@ -348,6 +382,45 @@ class PddAdapter(BaseAdapter):
             logger.info("[%s] Total popups dismissed: %d", self._shop_id, total_dismissed)
         return total_dismissed
 
+    async def _read_online_status_text(self) -> str:
+        status_element = await self._query_selector(self._page, "online_status_text")
+        if status_element is None:
+            return ""
+        try:
+            return str(await _wait(status_element.inner_text(), timeout_seconds=2.0)).strip()
+        except Exception:
+            return ""
+
+    async def detect_session_timeout(self) -> bool:
+        timeout_hint = await self._query_selector(self._page, "session_timeout_hint")
+        if timeout_hint is None:
+            return False
+
+        try:
+            visible = await _wait(timeout_hint.is_visible(), timeout_seconds=2.0)
+        except Exception:
+            visible = False
+        if not visible:
+            return False
+
+        refresh_button = await self._query_selector(self._page, "session_timeout_refresh_btn")
+        if refresh_button is not None:
+            try:
+                await _wait(refresh_button.click(), timeout_seconds=3.0)
+            except Exception:
+                await _wait(
+                    self._page.reload(wait_until="domcontentloaded"),
+                    timeout_seconds=10.0,
+                )
+        else:
+            await _wait(
+                self._page.reload(wait_until="domcontentloaded"),
+                timeout_seconds=10.0,
+            )
+
+        await _wait(self._page.wait_for_timeout(3000), timeout_seconds=5.0)
+        return True
+
     async def ensure_online_status(self) -> bool:
         """
         检测客服是否处于在线状态，如果不是则尝试切换回在线。
@@ -355,9 +428,37 @@ class PddAdapter(BaseAdapter):
         Returns:
             True 表示当前已在线或成功切回，False 表示检测或切换失败。
         """
-        # TODO: 等用户提供在线/离线状态的 DOM 选择器后实现具体检测与切换逻辑。
-        logger.debug("[%s] ensure_online_status called (not yet implemented)", self._shop_id)
-        return True
+        status_text = await self._read_online_status_text()
+        if not status_text:
+            logger.debug("[%s] Online status DOM not found, assuming online", self._shop_id)
+            return True
+
+        if "在线" in status_text:
+            return True
+
+        if "离线" not in status_text and "忙碌" not in status_text:
+            logger.debug("[%s] Unrecognized online status text: %s", self._shop_id, status_text)
+            return True
+
+        switch_button = await self._query_selector(self._page, "online_switch_button")
+        if switch_button is not None:
+            try:
+                await _wait(switch_button.click(), timeout_seconds=3.0)
+                await _wait(self._page.wait_for_timeout(2000), timeout_seconds=4.0)
+            except Exception:
+                logger.debug("[%s] Failed to click online switch", self._shop_id, exc_info=True)
+
+        refreshed_status_text = await self._read_online_status_text()
+        if "在线" in refreshed_status_text:
+            logger.info("[%s] Online status restored successfully", self._shop_id)
+            return True
+
+        await send_notification(
+            "客服离线",
+            f"店铺 {self._shop_id} 客服状态为离线，自动切换失败，请手动检查",
+            event_key=f"{self._shop_id}:online_status_switch_failed",
+        )
+        return False
 
     async def auto_login(self, username: str, password: str, timeout_ms: int = 120000) -> bool:
         """
@@ -474,6 +575,8 @@ class PddAdapter(BaseAdapter):
         max_wait_seconds = max(timeout_ms // 1000, 1)
         interval_seconds = 3.0
         elapsed_seconds = 0.0
+        captcha_notified = False
+        sms_notified = False
 
         while elapsed_seconds < max_wait_seconds:
             await _wait(
@@ -489,6 +592,13 @@ class PddAdapter(BaseAdapter):
 
             captcha = await self._query_selector(self._page, "login_captcha_slider")
             if captcha is not None:
+                if not captcha_notified:
+                    captcha_notified = True
+                    await send_notification(
+                        "需要验证码",
+                        f"店铺 {self._shop_id} 登录遇到滑块验证码，请手动处理",
+                        event_key=f"{self._shop_id}:login_captcha_slider",
+                    )
                 if elapsed_seconds % 15 < interval_seconds:
                     logger.warning(
                         "[%s] Captcha detected, waiting for manual resolution... (%.0fs)",
@@ -499,6 +609,13 @@ class PddAdapter(BaseAdapter):
 
             sms_input = await self._query_selector(self._page, "login_sms_input")
             if sms_input is not None:
+                if not sms_notified:
+                    sms_notified = True
+                    await send_notification(
+                        "需要短信验证码",
+                        f"店铺 {self._shop_id} 登录需要短信验证码，请手动输入",
+                        event_key=f"{self._shop_id}:login_sms_input",
+                    )
                 if elapsed_seconds % 15 < interval_seconds:
                     logger.warning(
                         "[%s] SMS verification required, waiting... (%.0fs)",

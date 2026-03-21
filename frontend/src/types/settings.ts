@@ -1,4 +1,5 @@
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
+export type WebhookType = 'feishu' | 'dingtalk' | 'wecom' | 'generic';
 
 export interface SystemSettings {
   apiBaseUrl: string;
@@ -10,6 +11,7 @@ export interface SystemSettings {
   defaultKeywords: string[];
   logLevel: LogLevel;
   historyRetentionDays: number;
-  alertWebhookUrl: string;
+  notifyWebhookUrl: string;
+  notifyWebhookType: WebhookType;
   maxShops: number;
 }

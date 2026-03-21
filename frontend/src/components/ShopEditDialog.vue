@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="dialogVisible" title="编辑店铺" width="680px" destroy-on-close>
+  <el-dialog v-model="dialogVisible" title="编辑店铺" width="680px" destroy-on-close :close-on-click-modal="false" :close-on-press-escape="false">
     <el-skeleton :loading="loading" animated>
       <template #template>
         <el-skeleton-item style="width: 100%; height: 260px" variant="p" />
@@ -31,7 +31,7 @@
               <span>店铺密码</span>
               <el-input
                 v-model="formState.password"
-                placeholder="已有密码可以留空不更新"
+                :placeholder="formState.hasPassword ? '********' : '请输入店铺密码'"
                 show-password
               />
               <small class="shop-edit-dialog__field-note">

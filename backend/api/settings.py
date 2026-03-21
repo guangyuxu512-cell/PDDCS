@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from backend.api.response import ok
 from backend.ai.llm_client import LlmClient
+from backend.services.notifier import send_notification
 from backend.services.settings_service import get_settings, save_settings
 
 
@@ -17,6 +18,11 @@ class TestLlmBody(BaseModel):
     apiBaseUrl: str
     apiKey: str
     model: str
+
+
+class TestWebhookBody(BaseModel):
+    url: str
+    webhookType: str = "feishu"
 
 
 @router.get("/settings")
@@ -39,3 +45,18 @@ async def api_test_llm(body: TestLlmBody) -> dict[str, Any]:
         model=body.model,
     )
     return ok(await client.test_connection())
+
+
+@router.post("/settings/test-webhook")
+async def api_test_webhook(body: TestWebhookBody) -> dict[str, Any]:
+    sent = await send_notification(
+        "PDDCS 通知测试",
+        "这是一条来自系统设置页的测试通知。",
+        level="info",
+        url=body.url,
+        webhook_type=body.webhookType,
+        dedupe=False,
+    )
+    if sent:
+        return ok({"ok": True, "message": "发送成功"})
+    return ok({"ok": False, "message": "发送失败，请检查 Webhook URL 或网络状态"})

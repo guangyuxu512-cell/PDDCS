@@ -51,11 +51,34 @@
           <el-form-item label="会话历史保留天数">
             <el-input-number v-model="formState.historyRetentionDays" :min="1" />
           </el-form-item>
-          <el-form-item class="settings__full" label="告警 Webhook URL">
-            <el-input v-model="formState.alertWebhookUrl" />
-          </el-form-item>
           <el-form-item label="单机最大店铺数">
             <el-input-number v-model="formState.maxShops" :min="1" />
+          </el-form-item>
+        </div>
+
+        <el-divider content-position="left">通知配置</el-divider>
+        <div class="settings__grid">
+          <el-form-item label="Webhook 类型">
+            <el-select v-model="formState.notifyWebhookType">
+              <el-option
+                v-for="item in webhookTypes"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item class="settings__test-action" label="发送测试">
+            <el-button :loading="testingWebhook" plain type="warning" @click="handleTestWebhook">
+              测试通知
+            </el-button>
+          </el-form-item>
+          <el-form-item class="settings__full" label="Webhook URL">
+            <el-input
+              v-model="formState.notifyWebhookUrl"
+              clearable
+              placeholder="请输入飞书/钉钉/企微机器人 Webhook URL"
+            />
           </el-form-item>
         </div>
 
@@ -71,12 +94,13 @@
 import { ElMessage } from 'element-plus';
 import { onMounted, ref } from 'vue';
 
-import { fetchSettings, saveSettings, testLlmConnection } from '@/api/settings';
-import type { LogLevel, SystemSettings } from '@/types/settings';
+import { fetchSettings, saveSettings, testLlmConnection, testWebhook } from '@/api/settings';
+import type { LogLevel, SystemSettings, WebhookType } from '@/types/settings';
 
 const loading = ref(true);
 const saving = ref(false);
 const testingConnection = ref(false);
+const testingWebhook = ref(false);
 const defaultKeywordsText = ref('');
 const formState = ref<SystemSettings>({
   apiBaseUrl: '',
@@ -88,11 +112,18 @@ const formState = ref<SystemSettings>({
   defaultKeywords: [],
   logLevel: 'INFO',
   historyRetentionDays: 30,
-  alertWebhookUrl: '',
+  notifyWebhookUrl: '',
+  notifyWebhookType: 'feishu',
   maxShops: 10,
 });
 
 const logLevels: LogLevel[] = ['DEBUG', 'INFO', 'WARNING', 'ERROR'];
+const webhookTypes: Array<{ label: string; value: WebhookType }> = [
+  { label: '飞书', value: 'feishu' },
+  { label: '钉钉', value: 'dingtalk' },
+  { label: '企业微信', value: 'wecom' },
+  { label: '通用', value: 'generic' },
+];
 
 onMounted(async () => {
   try {
@@ -146,6 +177,31 @@ async function handleTestConnection(): Promise<void> {
     ElMessage.error(`连接失败: ${message}`);
   } finally {
     testingConnection.value = false;
+  }
+}
+
+async function handleTestWebhook(): Promise<void> {
+  if (!formState.value.notifyWebhookUrl.trim()) {
+    ElMessage.error('请先填写 Webhook URL');
+    return;
+  }
+
+  testingWebhook.value = true;
+  try {
+    const result = await testWebhook({
+      url: formState.value.notifyWebhookUrl.trim(),
+      webhookType: formState.value.notifyWebhookType,
+    });
+    if (result.ok) {
+      ElMessage.success(result.message || '发送成功');
+      return;
+    }
+    ElMessage.error(result.message || '发送失败');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '未知错误';
+    ElMessage.error(`发送失败: ${message}`);
+  } finally {
+    testingWebhook.value = false;
   }
 }
 </script>

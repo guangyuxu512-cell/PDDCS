@@ -208,6 +208,56 @@ class TestAutoLogin:
             for call in adapter._query_selector.await_args_list
         )
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("selector_key", "expected_event_key"),
+        [
+            ("login_captcha_slider", "shop-test:login_captcha_slider"),
+            ("login_sms_input", "shop-test:login_sms_input"),
+        ],
+    )
+    async def test_auto_login_sends_manual_verification_notification_once(
+        self,
+        selector_key: str,
+        expected_event_key: str,
+    ) -> None:
+        adapter, _, simulator = _make_adapter(PDD_LOGIN_URL)
+
+        tab = MagicMock()
+        username_input = MagicMock()
+        username_input.click = AsyncMock()
+        password_input = MagicMock()
+        password_input.click = AsyncMock()
+        login_button = MagicMock()
+
+        async def mock_wait_for_selector(selector_key_name: str, timeout_ms: int) -> object | None:
+            del timeout_ms
+            if selector_key_name == "login_tab_account":
+                return tab
+            if selector_key_name == "login_username":
+                return username_input
+            if selector_key_name == "login_password":
+                return password_input
+            if selector_key_name == "login_button":
+                return login_button
+            raise AssertionError(selector_key_name)
+
+        async def mock_query_selector(_: object, queried_key: str) -> object | None:
+            if queried_key == selector_key:
+                return MagicMock()
+            return None
+
+        adapter._wait_for_selector = mock_wait_for_selector  # type: ignore[method-assign]
+        adapter._query_selector = AsyncMock(side_effect=mock_query_selector)  # type: ignore[method-assign]
+
+        with patch("backend.adapters.pdd.send_notification", new=AsyncMock(return_value=True)) as mock_notify:
+            result = await adapter.auto_login("testuser", "testpass")
+
+        assert result is True
+        assert simulator.simulate_typing.call_count == 2
+        mock_notify.assert_awaited_once()
+        assert mock_notify.await_args.kwargs["event_key"] == expected_event_key
+
 
 class TestNavigateToChatWithLogin:
     @pytest.mark.asyncio

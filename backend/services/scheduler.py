@@ -148,7 +148,6 @@ def _online_shop_ids() -> list[str]:
         rows = session.scalars(
             select(ShopTable.id).where(
                 ShopTable.is_online.is_(True),
-                ShopTable.ai_enabled.is_(True),
             )
         ).all()
     return [str(row) for row in rows]

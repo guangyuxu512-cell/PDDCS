@@ -24,6 +24,7 @@ from backend.db.orm import EscalationLogTable, ShopTable
 from backend.engines.human_simulator import HumanSimulator
 from backend.engines.playwright_engine import engine
 from backend.services.message_processor import process_buyer_message
+from backend.services.notifier import send_notification
 from backend.services.settings_service import get_settings
 from backend.services.shop_service import get_shop_config
 from backend.workers.protocol import (
@@ -204,6 +205,8 @@ class ShopRuntime:
         self._worker_id = worker_id
         self._status_queue = status_queue
         self._proxy_overrides: dict[str, str] = {}
+        self._login_fail_count: dict[str, int] = {}
+        self._stop_reasons: dict[str, str] = {}
 
     def _emit_status(self, event: StatusEvent) -> None:
         if self._status_queue is None:
@@ -247,10 +250,22 @@ class ShopRuntime:
             return override
         return _get_shop_proxy(shop_id)
 
+    def _set_stop_reason(self, shop_id: str, reason: str) -> None:
+        self._stop_reasons[shop_id] = reason
+
+    def _is_login_failure_reason(self, reason: str) -> bool:
+        return reason in {
+            "automatic_login_failed",
+            "manual_login_timeout",
+            "automatic_relogin_failed",
+            "manual_relogin_timeout",
+        }
+
     def _on_task_done(self, shop_id: str, task: asyncio.Task[None]) -> None:
         current = self._running_tasks.get(shop_id)
         if current is task:
             self._running_tasks.pop(shop_id, None)
+        reason = self._stop_reasons.pop(shop_id, "")
 
         was_cancelled = False
         try:
@@ -263,6 +278,32 @@ class ShopRuntime:
 
         try:
             if not was_cancelled and _get_shop_restart_policy(shop_id):
+                if self._is_login_failure_reason(reason):
+                    failure_count = self._login_fail_count.get(shop_id, 0) + 1
+                    self._login_fail_count[shop_id] = failure_count
+                    if failure_count >= 3:
+                        self._clear_proxy_override(shop_id)
+                        _update_shop_status(shop_id, is_online=False, cookie_valid=False)
+                        self._emit_status(
+                            ShopOffline(
+                                shop_id=shop_id,
+                                worker_id=self._worker_id,
+                                reason="login_failures_exceeded",
+                            )
+                        )
+                        logger.error("[%s] Login failed %s times, auto restart paused", shop_id, failure_count)
+                        asyncio.create_task(
+                            send_notification(
+                                "登录多次失败",
+                                f"店铺 {shop_id} 连续 {failure_count} 次登录失败，已暂停自动重启，请手动检查",
+                                level="error",
+                                event_key=f"{shop_id}:login_failures_exceeded",
+                            )
+                        )
+                        return
+                else:
+                    self._login_fail_count.pop(shop_id, None)
+
                 _update_shop_status(shop_id, is_online=False)
                 logger.info("[%s] auto_restart=ON, scheduling restart in 10 seconds", shop_id)
                 asyncio.get_event_loop().call_later(
@@ -271,6 +312,8 @@ class ShopRuntime:
                 )
                 return
 
+            if not self._is_login_failure_reason(reason):
+                self._login_fail_count.pop(shop_id, None)
             self._clear_proxy_override(shop_id)
             _update_shop_status(shop_id, is_online=False)
             self._emit_status(ShopOffline(shop_id=shop_id, worker_id=self._worker_id, reason="task_done"))
@@ -358,13 +401,14 @@ class ShopRuntime:
                     shop_id=shop_id,
                     raw_msg=message,
                     llm_client=llm_client,
+                    ai_enabled=bool(shop_config.get("ai_enabled", False)),
                 ),
                 timeout_seconds=_env_float(
                     "SHOP_MESSAGE_PROCESS_TIMEOUT_SECONDS",
                     DEFAULT_MESSAGE_PROCESS_TIMEOUT_SECONDS,
                 ),
             )
-            if result.action == "skip":
+            if result.action in {"skip", "stored"}:
                 continue
 
             if result.action == "reply":
@@ -421,10 +465,17 @@ class ShopRuntime:
                     if not logged_in:
                         if used_credentials:
                             logger.error("[%s] Automatic login failed, stopping", shop_id)
+                            self._set_stop_reason(shop_id, "automatic_login_failed")
                             _update_shop_status(shop_id, is_online=False, cookie_valid=False)
                             self._emit_status(ShopLoginFailed(shop_id=shop_id, worker_id=self._worker_id))
                             self._emit_status(
                                 ShopOffline(shop_id=shop_id, worker_id=self._worker_id, reason="automatic_login_failed")
+                            )
+                            await send_notification(
+                                "登录失败",
+                                f"店铺 {shop_id} 登录失败，可能需要手动处理验证码",
+                                level="error",
+                                event_key=f"{shop_id}:automatic_login_failed",
                             )
                             return
                         logger.warning("[%s] Not logged in, waiting for manual login...", shop_id)
@@ -432,6 +483,7 @@ class ShopRuntime:
                         success = await self._wait_for_manual_login(shop_id, adapter)
                         if not success:
                             logger.error("[%s] Login timeout, stopping", shop_id)
+                            self._set_stop_reason(shop_id, "manual_login_timeout")
                             _update_shop_status(shop_id, is_online=False, cookie_valid=False)
                             self._emit_status(ShopLoginFailed(shop_id=shop_id, worker_id=self._worker_id))
                             self._emit_status(
@@ -439,6 +491,7 @@ class ShopRuntime:
                             )
                             return
 
+                    self._login_fail_count.pop(shop_id, None)
                     _update_shop_status(shop_id, is_online=True, cookie_valid=True)
                     self._emit_status(ShopOnline(shop_id=shop_id, worker_id=self._worker_id))
                     try:
@@ -491,6 +544,7 @@ class ShopRuntime:
                                 if not still_logged_in:
                                     if used_credentials:
                                         logger.error("[%s] Automatic re-login failed", shop_id)
+                                        self._set_stop_reason(shop_id, "automatic_relogin_failed")
                                         _update_shop_status(shop_id, is_online=False, cookie_valid=False)
                                         self._emit_status(ShopLoginFailed(shop_id=shop_id, worker_id=self._worker_id))
                                         self._emit_status(
@@ -500,11 +554,18 @@ class ShopRuntime:
                                                 reason="automatic_relogin_failed",
                                             )
                                         )
+                                        await send_notification(
+                                            "登录失败",
+                                            f"店铺 {shop_id} 登录失败，可能需要手动处理验证码",
+                                            level="error",
+                                            event_key=f"{shop_id}:automatic_relogin_failed",
+                                        )
                                         return
                                     logger.warning("[%s] Still not logged in, waiting for manual login...", shop_id)
                                     success = await self._wait_for_manual_login(shop_id, adapter)
                                     if not success:
                                         logger.error("[%s] Re-login timeout", shop_id)
+                                        self._set_stop_reason(shop_id, "manual_relogin_timeout")
                                         _update_shop_status(shop_id, is_online=False, cookie_valid=False)
                                         self._emit_status(ShopLoginFailed(shop_id=shop_id, worker_id=self._worker_id))
                                         self._emit_status(
@@ -516,6 +577,7 @@ class ShopRuntime:
                                         )
                                         return
 
+                                self._login_fail_count.pop(shop_id, None)
                                 _update_shop_status(shop_id, cookie_valid=True)
                                 self._emit_status(ShopOnline(shop_id=shop_id, worker_id=self._worker_id))
                                 try:
@@ -568,6 +630,30 @@ class ShopRuntime:
                                             )
                                 except Exception:
                                     logger.debug("[%s] force_online check failed", shop_id)
+
+                            if poll_count % 20 == 0:
+                                try:
+                                    detect_timeout_fn = getattr(adapter, "detect_session_timeout", None)
+                                    if callable(detect_timeout_fn):
+                                        timeout_detected = await _wait(
+                                            detect_timeout_fn(),
+                                            timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS,
+                                        )
+                                        if timeout_detected:
+                                            logger.warning("[%s] Session timeout detected, page refreshed", shop_id)
+                                            await send_notification(
+                                                "页面超时",
+                                                f"店铺 {shop_id} 页面超时已自动刷新",
+                                                event_key=f"{shop_id}:session_timeout",
+                                            )
+                                            find_chat_frame = getattr(adapter, "_find_chat_frame", None)
+                                            if callable(find_chat_frame):
+                                                adapter._chat_frame = await _wait(
+                                                    find_chat_frame(),
+                                                    timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS,
+                                                )
+                                except Exception:
+                                    logger.debug("[%s] session timeout check failed", shop_id)
 
                             shop_config, llm_client = _load_runtime_configuration(shop_id)
                             sessions = await _wait(
@@ -674,6 +760,8 @@ class ShopRuntime:
             logger.warning("[%s] Shop does not exist", shop_id)
             return False
 
+        self._login_fail_count.pop(shop_id, None)
+        self._stop_reasons.pop(shop_id, None)
         self._set_proxy_override(shop_id, proxy)
         task = asyncio.create_task(self._shop_loop(shop_id), name=f"shop-{shop_id}")
         self._running_tasks[shop_id] = task
@@ -722,7 +810,6 @@ class ShopRuntime:
             rows = session.scalars(
                 select(ShopTable.id).where(
                     ShopTable.is_online.is_(True),
-                    ShopTable.ai_enabled.is_(True),
                 )
             ).all()
 

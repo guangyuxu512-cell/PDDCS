@@ -93,6 +93,7 @@ def test() -> None:
         settings = SystemSettings.model_validate(settings_dict)
         assert settings.model_dump()["temperature"] == 0.7
         assert settings.model_dump()["logLevel"] == "INFO"
+        assert settings.model_dump()["notifyWebhookType"] == "feishu"
         assert settings.model_dump()["maxShops"] == 10
 
     _cleanup_database_files()

@@ -90,6 +90,8 @@ def test_database_schema_and_models_align_with_frontend_types(isolated_database:
     assert session.model_dump()["messages"][0]["sender"] == "buyer"
     assert settings.model_dump()["defaultKeywords"] == []
     assert settings.model_dump()["maxTokens"] == 200
+    assert settings.model_dump()["notifyWebhookUrl"] == ""
+    assert settings.model_dump()["notifyWebhookType"] == "feishu"
     assert isolated_database.exists()
 
 
