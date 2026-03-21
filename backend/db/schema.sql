@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS shop_configs (
     human_agent_name        TEXT NOT NULL DEFAULT '',
     escalation_rules        TEXT NOT NULL DEFAULT '[]',
     escalation_fallback_msg TEXT NOT NULL DEFAULT '',
+    auto_restart            INTEGER NOT NULL DEFAULT 0,
+    force_online            INTEGER NOT NULL DEFAULT 0,
     updated_at              TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 

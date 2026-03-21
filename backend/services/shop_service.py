@@ -146,7 +146,9 @@ def get_shop_config(shop_id: str) -> ShopConfig | None:
             c.use_global_knowledge,
             c.human_agent_name,
             c.escalation_rules,
-            c.escalation_fallback_msg
+            c.escalation_fallback_msg,
+            c.auto_restart,
+            c.force_online
         FROM shops s
         LEFT JOIN shop_configs c ON c.shop_id = s.id
         WHERE s.id = ?
@@ -172,6 +174,8 @@ def get_shop_config(shop_id: str) -> ShopConfig | None:
         _default_if_none(data, "human_agent_name", "")
         _default_if_none(data, "escalation_rules", "[]")
         _default_if_none(data, "escalation_fallback_msg", "")
+        _default_if_none(data, "auto_restart", 0)
+        _default_if_none(data, "force_online", 0)
 
     return ShopConfig.model_validate(data)
 
@@ -208,8 +212,10 @@ def update_shop_config(shop_id: str, body: dict[str, Any]) -> ShopConfig | None:
                 human_agent_name,
                 escalation_rules,
                 escalation_fallback_msg,
+                auto_restart,
+                force_online,
                 updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(shop_id) DO UPDATE SET
                 llm_mode=excluded.llm_mode,
                 custom_api_key=excluded.custom_api_key,
@@ -220,6 +226,8 @@ def update_shop_config(shop_id: str, body: dict[str, Any]) -> ShopConfig | None:
                 human_agent_name=excluded.human_agent_name,
                 escalation_rules=excluded.escalation_rules,
                 escalation_fallback_msg=excluded.escalation_fallback_msg,
+                auto_restart=excluded.auto_restart,
+                force_online=excluded.force_online,
                 updated_at=excluded.updated_at
             """,
             (
@@ -233,6 +241,8 @@ def update_shop_config(shop_id: str, body: dict[str, Any]) -> ShopConfig | None:
                 body.get("humanAgentName", ""),
                 json.dumps(body.get("escalationRules", []), ensure_ascii=False),
                 body.get("escalationFallbackMsg", ""),
+                int(body.get("autoRestart", False)),
+                int(body.get("forceOnline", False)),
                 now,
             ),
         )

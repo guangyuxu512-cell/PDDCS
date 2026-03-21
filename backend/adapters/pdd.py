@@ -336,6 +336,17 @@ class PddAdapter(BaseAdapter):
             logger.info("[%s] Total popups dismissed: %d", self._shop_id, total_dismissed)
         return total_dismissed
 
+    async def ensure_online_status(self) -> bool:
+        """
+        检测客服是否处于在线状态，如果不是则尝试切换回在线。
+
+        Returns:
+            True 表示当前已在线或成功切回，False 表示检测或切换失败。
+        """
+        # TODO: 等用户提供在线/离线状态的 DOM 选择器后实现具体检测与切换逻辑。
+        logger.debug("[%s] ensure_online_status called (not yet implemented)", self._shop_id)
+        return True
+
     async def auto_login(self, username: str, password: str, timeout_ms: int = 120000) -> bool:
         """
         自动登录拼多多商家后台。

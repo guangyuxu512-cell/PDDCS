@@ -74,6 +74,8 @@ class ShopConfig(CamelModel):
     human_agent_name: str = ""
     escalation_rules: list[EscalationRule] = Field(default_factory=list)
     escalation_fallback_msg: str = ""
+    auto_restart: bool = False
+    force_online: bool = False
 
     @model_validator(mode="before")
     @classmethod

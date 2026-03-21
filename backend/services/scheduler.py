@@ -87,6 +87,24 @@ def _get_shop_credentials(shop_id: str) -> tuple[str, str]:
     return str(row["username"] or "").strip(), str(row["password"] or "")
 
 
+def _get_shop_restart_policy(shop_id: str) -> bool:
+    """返回店铺是否开启了自动重启。"""
+    config_model = get_shop_config(shop_id)
+    if config_model is None:
+        return False
+    config = config_model.model_dump(by_alias=False)
+    return bool(config.get("auto_restart", False))
+
+
+def _get_shop_force_online(shop_id: str) -> bool:
+    """返回店铺是否开启了强制在线。"""
+    config_model = get_shop_config(shop_id)
+    if config_model is None:
+        return False
+    config = config_model.model_dump(by_alias=False)
+    return bool(config.get("force_online", False))
+
+
 def _get_shop_proxy(shop_id: str) -> str:
     config_model = get_shop_config(shop_id)
     if config_model is None:
@@ -337,8 +355,6 @@ class ShopScheduler:
                     except Exception:
                         logger.exception("[%s] Failed to save cookie after login", shop_id)
 
-                    crash_retries = 0
-
                     poll_interval = _env_float("SHOP_POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS)
                     poll_count = 0
                     loop = asyncio.get_running_loop()
@@ -352,6 +368,13 @@ class ShopScheduler:
                         if not await _is_shop_context_alive(shop_id):
                             context_exists = _get_shop_context(shop_id) is not None
                             if not context_exists:
+                                if _get_shop_restart_policy(shop_id):
+                                    logger.warning(
+                                        "[%s] Browser closed externally, auto_restart=ON -> restarting",
+                                        shop_id,
+                                    )
+                                    raise RuntimeError("Browser closed externally, auto_restart triggered")
+
                                 logger.warning(
                                     "[%s] Browser context closed externally, stopping gracefully",
                                     shop_id,
@@ -410,6 +433,7 @@ class ShopScheduler:
                                 logger.exception("[%s] Memory cleanup failed", shop_id)
                             last_memory_cleanup_time = now
 
+                        poll_succeeded = False
                         try:
                             if poll_count % 10 == 0:
                                 try:
@@ -421,6 +445,22 @@ class ShopScheduler:
                                         )
                                 except Exception:
                                     logger.debug("[%s] Periodic popup dismiss failed", shop_id)
+
+                            if poll_count % 30 == 0 and _get_shop_force_online(shop_id):
+                                try:
+                                    ensure_fn = getattr(adapter, "ensure_online_status", None)
+                                    if callable(ensure_fn):
+                                        is_online = await _wait(
+                                            ensure_fn(),
+                                            timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS,
+                                        )
+                                        if not is_online:
+                                            logger.warning(
+                                                "[%s] force_online: failed to ensure online status",
+                                                shop_id,
+                                            )
+                                except Exception:
+                                    logger.debug("[%s] force_online check failed", shop_id)
 
                             shop_config, llm_client = _load_runtime_configuration(shop_id)
                             sessions = await _wait(
@@ -444,10 +484,14 @@ class ShopScheduler:
                                         shop_id,
                                         session_info.session_id,
                                     )
+                            poll_succeeded = True
                         except asyncio.CancelledError:
                             raise
                         except Exception:
                             logger.exception("[%s] Error in poll cycle", shop_id)
+
+                        if poll_succeeded:
+                            crash_retries = 0
 
                         await _sleep(poll_interval)
                 except asyncio.CancelledError:
@@ -467,12 +511,18 @@ class ShopScheduler:
 
                     contexts = getattr(engine, "_contexts", None)
                     if isinstance(contexts, dict) and shop_id not in contexts:
-                        logger.warning(
-                            "[%s] Browser context gone during crash recovery, stopping gracefully",
-                            shop_id,
-                        )
-                        _update_shop_status(shop_id, is_online=False, cookie_valid=False)
-                        return
+                        if _get_shop_restart_policy(shop_id):
+                            logger.warning(
+                                "[%s] Browser context gone, auto_restart=ON -> will reopen",
+                                shop_id,
+                            )
+                        else:
+                            logger.warning(
+                                "[%s] Browser context gone during crash recovery, stopping gracefully",
+                                shop_id,
+                            )
+                            _update_shop_status(shop_id, is_online=False, cookie_valid=False)
+                            return
 
                     try:
                         proxy = _get_shop_proxy(shop_id)
