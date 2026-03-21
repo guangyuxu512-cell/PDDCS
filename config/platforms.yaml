@@ -1,0 +1,158 @@
+pdd:
+  chat_url: "https://mms.pinduoduo.com/chat-merchant/#/"
+  login_url: "https://mms.pinduoduo.com/login/"
+  poll_interval: 3
+  reply_delay_min_ms: 2000
+  reply_delay_max_ms: 5000
+  attributes:
+    session_id: "data-random"
+    message_index: "index"
+  selectors:
+    login_tab: ".login-tab div:has-text('账号登录')"
+    login_username: "#usernameId"
+    login_password: "#passwordId"
+    login_submit: "button:has-text('登录')"
+    session_list:
+      - "ul:has(> li.chat-item)"
+      - "[class*='chat-list']"
+    session_timeout_item:
+      - "ul.timeout-unreply li.chat-item"
+    session_pending_item:
+      - "ul.five-minute li.chat-item"
+    session_item:
+      - "li.chat-item"
+    session_box:
+      - "div.chat-item-box"
+    session_skipped:
+      - "div.chat-item-box.un-watch"
+    session_nickname:
+      - "span.nickname-span"
+      - ".chat-detail .nickname-span"
+      - ".chat-nickname .nickname-span"
+    buyer_name:
+      - ".chat-detail .nickname-span"
+      - ".chat-nickname .nickname-span"
+      - "span.nickname-span"
+    last_message:
+      - ".chat-detail .chat-message-content"
+      - ".bottom-message .chat-message-content"
+      - "p.chat-message-content"
+    unread_badge:
+      - ".chat-unreply-time"
+      - "[class*='unread']"
+    session_countdown:
+      - "p.chat-unreply-time"
+    session_overtime:
+      - "p.chat-unreply-over-time"
+    message_container:
+      - ".merchantMessage"
+    message_item:
+      - ".merchantMessage .buyer-item"
+      - ".merchantMessage .seller-item"
+      - ".merchantMessage .robot-item"
+    message_list_item:
+      - "li.onemsg"
+    buyer_item:
+      - ".buyer-item"
+    seller_item:
+      - ".seller-item"
+    robot_item:
+      - ".robot-item"
+    system_item:
+      - ".system-msg-31"
+    system_text:
+      - ".content-box"
+    system_button:
+      - ".btn"
+    message_text:
+      - ".msg-content-box"
+    message_index:
+      - ".msg-content"
+    good_card:
+      - ".good-card"
+    good_name:
+      - ".good-name"
+    good_price:
+      - ".good-price"
+    good_id:
+      - "p.good-id"
+    common_card:
+      - ".commonCard"
+    input_box:
+      - "textarea#replyTextarea"
+      - "textarea.custom-scroll"
+      - "div.chat-input pre[contenteditable='true']"
+      - "textarea.chat-textarea"
+    send_button:
+      - "div.send-btn"
+      - "[class='send-btn']"
+      - "button.send-btn"
+    transfer_button:
+      - ".checkbox-transfer-btn"
+      - ".transfer-chat-item-btn"
+    agent_select:
+      - ".agent-list"
+      - "[class*='agentList']"
+      - "[class*='staffList']"
+    agent_item:
+      - ".agent-item"
+      - "[class*='agentItem']"
+      - "[class*='staffItem']"
+    login_tab_account:
+      - ".login-tab div:has-text('账号登录')"
+      - "text=账号登录"
+      - ".login-tab-item"
+    login_button:
+      - "button:has-text('登录')"
+      - "button[type='submit']"
+    login_captcha_slider:
+      - ".captcha-container"
+      - ".captcha-slider"
+      - ".sc-jrQzAO"
+      - "#captcha_container"
+    login_sms_input:
+      - "input[placeholder='请输入短信验证码']"
+      - "input[placeholder*='验证码']"
+      - "input[placeholder*='短信']"
+    session_timeout_hint:
+      - "div:has-text('网络异常')"
+      - "div:has-text('请刷新页面')"
+      - "div:has-text('页面已过期')"
+      - "div:has-text('连接已断开')"
+      - ".network-error"
+      - ".page-expired"
+    session_timeout_refresh_btn:
+      - "button:has-text('刷新')"
+      - "button:has-text('重新加载')"
+      - "a:has-text('刷新页面')"
+    online_status_indicator:
+      - ".online-status"
+      - "[class*='onlineStatus']"
+      - "[class*='service-status']"
+      - ".status-indicator"
+    online_status_text:
+      - ".online-status-text"
+      - "[class*='statusText']"
+      - "span:has-text('在线')"
+      - "span:has-text('离线')"
+      - "span:has-text('忙碌')"
+    online_switch_button:
+      - ".online-switch"
+      - "[class*='onlineSwitch']"
+      - "button:has-text('上线')"
+      - "button:has-text('恢复在线')"
+      - ".status-toggle"
+    popup_dismiss_today:
+      - "a:has-text('今天不再提示')"
+      - "span:has-text('今天不再提示')"
+      - "div:has-text('今天不再提示') >> visible=true"
+    popup_dismiss_ok:
+      - "button:has-text('我知道了')"
+      - "a:has-text('我知道了')"
+      - "div.btn:has-text('我知道了')"
+    popup_close_icon:
+      - ".modal-close"
+      - ".popup-close"
+      - "[class*='close-btn']"
+      - "[class*='closeBtn']"
+      - ".ant-modal-close"

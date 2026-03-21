@@ -17,6 +17,7 @@ class RawMessage:
     sender: str
     timestamp: str
     dedup_key: str
+    message_type: str = ""
 
 
 @dataclass
@@ -28,6 +29,9 @@ class SessionInfo:
     buyer_name: str
     last_message: str = ""
     unread: bool = False
+    session_selector: str = ""
+    is_timeout: bool = False
+    remaining_seconds: int = 0
 
 
 class BaseAdapter(ABC):

@@ -191,6 +191,26 @@ async def _save_shop_cookies(shop_id: str) -> None:
     await _wait(cookie_manager.save(shop_id, context), timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS)
 
 
+def _split_session_buyer_messages(raw_messages: list[RawMessage]) -> tuple[list[RawMessage], RawMessage | None]:
+    buyer_indexes = [
+        index
+        for index, message in enumerate(raw_messages)
+        if message.sender == "buyer" and message.content.strip()
+    ]
+    if not buyer_indexes:
+        return [], None
+
+    last_buyer_index = buyer_indexes[-1]
+    history_messages = [raw_messages[index] for index in buyer_indexes[:-1]]
+    last_buyer_message = raw_messages[last_buyer_index]
+    has_human_reply_after = any(message.sender == "human" for message in raw_messages[last_buyer_index + 1 :])
+
+    if has_human_reply_after:
+        history_messages.append(last_buyer_message)
+        return history_messages, None
+    return history_messages, last_buyer_message
+
+
 class ShopRuntime:
     """Reusable shop runtime that can run in main process or worker process."""
 
@@ -392,52 +412,71 @@ class ShopRuntime:
             adapter.fetch_messages(session_info.session_id),
             timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS,
         )
-        for message in raw_messages:
-            if message.sender != "buyer":
-                continue
+        history_messages, pending_message = _split_session_buyer_messages(raw_messages)
+        process_timeout = _env_float(
+            "SHOP_MESSAGE_PROCESS_TIMEOUT_SECONDS",
+            DEFAULT_MESSAGE_PROCESS_TIMEOUT_SECONDS,
+        )
 
-            result = await _wait(
+        for history_message in history_messages:
+            await _wait(
                 process_buyer_message(
                     shop_id=shop_id,
-                    raw_msg=message,
+                    raw_msg=history_message,
                     llm_client=llm_client,
-                    ai_enabled=bool(shop_config.get("ai_enabled", False)),
+                    ai_enabled=False,
                 ),
-                timeout_seconds=_env_float(
-                    "SHOP_MESSAGE_PROCESS_TIMEOUT_SECONDS",
-                    DEFAULT_MESSAGE_PROCESS_TIMEOUT_SECONDS,
-                ),
+                timeout_seconds=process_timeout,
             )
-            if result.action in {"skip", "stored"}:
-                continue
 
-            if result.action == "reply":
-                sent = await _wait(
-                    adapter.send_message(session_info.session_id, result.reply_text),
+        if pending_message is None:
+            if history_messages:
+                logger.info(
+                    "[%s] Skip auto reply for %s because human replied after the latest buyer message",
+                    shop_id,
+                    session_info.buyer_name,
+                )
+            return
+
+        result = await _wait(
+            process_buyer_message(
+                shop_id=shop_id,
+                raw_msg=pending_message,
+                llm_client=llm_client,
+                ai_enabled=bool(shop_config.get("ai_enabled", False)),
+            ),
+            timeout_seconds=process_timeout,
+        )
+        if result.action in {"skip", "stored"}:
+            return
+
+        if result.action == "reply":
+            sent = await _wait(
+                adapter.send_message(session_info.session_id, result.reply_text),
+                timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS,
+            )
+            if sent:
+                logger.info("[%s] Replied to %s", shop_id, session_info.buyer_name)
+            else:
+                logger.warning("[%s] Failed to reply to %s", shop_id, session_info.buyer_name)
+            return
+
+        if result.action == "escalate":
+            fallback = str(shop_config.get("escalation_fallback_msg", "")).strip()
+            if fallback:
+                await _wait(
+                    adapter.send_message(session_info.session_id, fallback),
                     timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS,
                 )
-                if sent:
-                    logger.info("[%s] Replied to %s", shop_id, session_info.buyer_name)
-                else:
-                    logger.warning("[%s] Failed to reply to %s", shop_id, session_info.buyer_name)
-                continue
 
-            if result.action == "escalate":
-                fallback = str(shop_config.get("escalation_fallback_msg", "")).strip()
-                if fallback:
-                    await _wait(
-                        adapter.send_message(session_info.session_id, fallback),
-                        timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS,
-                    )
-
-                target = str(shop_config.get("human_agent_name", "")).strip()
-                success = False
-                if target:
-                    success = await _wait(
-                        adapter.trigger_escalation(session_info.session_id, target),
-                        timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS,
-                    )
-                _update_escalation_log(result.session_id, shop_id, success)
+            target = str(shop_config.get("human_agent_name", "")).strip()
+            success = False
+            if target:
+                success = await _wait(
+                    adapter.trigger_escalation(session_info.session_id, target),
+                    timeout_seconds=DEFAULT_OPERATION_TIMEOUT_SECONDS,
+                )
+            _update_escalation_log(result.session_id, shop_id, success)
 
     async def _shop_loop(self, shop_id: str) -> None:
         logger.info("[%s] Shop loop started in worker %s", shop_id, self._worker_id)

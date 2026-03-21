@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from collections.abc import Awaitable
 from datetime import datetime
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from playwright.async_api import ElementHandle, Frame, Page, TimeoutError as PlaywrightTimeoutError
 
@@ -15,6 +16,7 @@ from backend.adapters.base import BaseAdapter, RawMessage, SessionInfo
 from backend.adapters.selector_config import SelectorConfig
 from backend.engines.human_simulator import HumanSimulator
 from backend.services.notifier import send_notification
+from config.platforms import get_platform_config, get_platform_selector_values
 
 
 logger = logging.getLogger(__name__)
@@ -24,128 +26,21 @@ def _selector(primary: str, *fallbacks: str) -> SelectorConfig:
     return SelectorConfig(primary=primary, fallbacks=list(fallbacks) or None)
 
 
-SELECTORS: dict[str, SelectorConfig] = {
-    "login_tab": _selector(".login-tab div:has-text('账号登录')"),
-    "login_username": _selector("#usernameId"),
-    "login_password": _selector("#passwordId"),
-    "login_submit": _selector("button:has-text('登录')"),
-    "session_list": _selector(
-        "ul:has(> li.chat-item)",
-        "[class*='chat-list']",
-    ),
-    "session_item": _selector("li.chat-item"),
-    "buyer_name": _selector(
-        ".chat-detail .nickname-span",
-        ".chat-nickname .nickname-span",
-    ),
-    "last_message": _selector(
-        ".chat-detail .chat-message-content",
-        ".bottom-message .chat-message-content",
-    ),
-    "unread_badge": _selector(
-        ".chat-unreply-time",
-        "[class*='unread']",
-    ),
-    "message_container": _selector(".merchantMessage"),
-    "message_item": _selector(
-        ".merchantMessage .buyer-item",
-        ".merchantMessage .seller-item",
-        ".merchantMessage .robot-item",
-    ),
-    "message_text": _selector(".msg-content-box"),
-    "message_index": _selector(".msg-content"),
-    "message_sender_buyer": _selector(".buyer-item"),
-    "message_sender_self": _selector(
-        ".seller-item",
-        ".robot-item",
-    ),
-    "input_box": _selector(
-        "textarea#replyTextarea",
-        "textarea.custom-scroll",
-    ),
-    "send_button": _selector(
-        "div.send-btn",
-        "[class='send-btn']",
-    ),
-    "transfer_button": _selector(
-        ".checkbox-transfer-btn",
-        ".transfer-chat-item-btn",
-    ),
-    "agent_select": _selector(".agent-list", "[class*='agentList']", "[class*='staffList']"),
-    "agent_item": _selector(".agent-item", "[class*='agentItem']", "[class*='staffItem']"),
-    "login_tab_account": _selector(
-        ".login-tab div:has-text('账号登录')",
-        "text=账号登录",
-        ".login-tab-item",
-    ),
-    "login_button": _selector(
-        "button:has-text('登录')",
-        "button[type='submit']",
-    ),
-    "login_captcha_slider": _selector(
-        ".captcha-container",
-        ".captcha-slider",
-        ".sc-jrQzAO",
-        "#captcha_container",
-    ),
-    "login_sms_input": _selector(
-        "input[placeholder='请输入短信验证码']",
-        "input[placeholder*='验证码']",
-        "input[placeholder*='短信']",
-    ),
-    "session_timeout_hint": _selector(
-        "div:has-text('网络异常')",
-        "div:has-text('请刷新页面')",
-        "div:has-text('页面已过期')",
-        "div:has-text('连接已断开')",
-        ".network-error",
-        ".page-expired",
-    ),
-    "session_timeout_refresh_btn": _selector(
-        "button:has-text('刷新')",
-        "button:has-text('重新加载')",
-        "a:has-text('刷新页面')",
-    ),
-    "online_status_indicator": _selector(
-        ".online-status",
-        "[class*='onlineStatus']",
-        "[class*='service-status']",
-        ".status-indicator",
-    ),
-    "online_status_text": _selector(
-        ".online-status-text",
-        "[class*='statusText']",
-        "span:has-text('在线')",
-        "span:has-text('离线')",
-        "span:has-text('忙碌')",
-    ),
-    "online_switch_button": _selector(
-        ".online-switch",
-        "[class*='onlineSwitch']",
-        "button:has-text('上线')",
-        "button:has-text('恢复在线')",
-        ".status-toggle",
-    ),
-    "popup_dismiss_today": _selector(
-        "a:has-text('今天不再提示')",
-        "span:has-text('今天不再提示')",
-        "div:has-text('今天不再提示') >> visible=true",
-    ),
-    "popup_dismiss_ok": _selector(
-        "button:has-text('我知道了')",
-        "a:has-text('我知道了')",
-        "div.btn:has-text('我知道了')",
-    ),
-    "popup_close_icon": _selector(
-        ".modal-close",
-        ".popup-close",
-        "[class*='close-btn']",
-        "[class*='closeBtn']",
-        ".ant-modal-close",
-    ),
-}
-PDD_CHAT_URL = "https://mms.pinduoduo.com/chat-merchant/#/"
-PDD_LOGIN_URL = "https://mms.pinduoduo.com/login/"
+def _load_pdd_selectors() -> dict[str, SelectorConfig]:
+    selector_values = get_platform_selector_values("pdd")
+    return {
+        key: _selector(values[0], *values[1:])
+        for key, values in selector_values.items()
+    }
+
+
+_PDD_CONFIG = get_platform_config("pdd")
+_PDD_ATTRIBUTES = dict(_PDD_CONFIG.get("attributes", {}))
+SELECTORS: dict[str, SelectorConfig] = _load_pdd_selectors()
+PDD_CHAT_URL = str(_PDD_CONFIG["chat_url"])
+PDD_LOGIN_URL = str(_PDD_CONFIG["login_url"])
+SESSION_ID_ATTRIBUTE = str(_PDD_ATTRIBUTES.get("session_id", "data-random"))
+MESSAGE_INDEX_ATTRIBUTE = str(_PDD_ATTRIBUTES.get("message_index", "index"))
 DEFAULT_TIMEOUT_SECONDS = 10.0
 T = TypeVar("T")
 SelectorScope = Page | Frame | ElementHandle
@@ -169,6 +64,225 @@ class PddAdapter(BaseAdapter):
         self._human_simulator = human_simulator or HumanSimulator(page)
         self._current_session_id: str | None = None
         self._chat_frame: ChatScope | None = None
+        self._session_selectors: dict[str, str] = {}
+        self._session_names: dict[str, str] = {}
+
+    async def _query_selector_by_value(
+        self,
+        scope: SelectorScope,
+        selector_value: str,
+    ) -> ElementHandle | None:
+        try:
+            return await _wait(scope.query_selector(selector_value))
+        except Exception:
+            return None
+
+    async def _query_selector_all_by_value(
+        self,
+        scope: SelectorScope,
+        selector_value: str,
+    ) -> list[ElementHandle]:
+        try:
+            return await _wait(scope.query_selector_all(selector_value))
+        except Exception:
+            return []
+
+    async def _get_text(self, scope: SelectorScope, selector_key: str) -> str:
+        element = await self._query_selector(scope, selector_key)
+        if element is None:
+            return ""
+        try:
+            return str(await _wait(element.inner_text())).strip()
+        except Exception:
+            return ""
+
+    async def _is_skipped_session(self, item: ElementHandle, box: ElementHandle | None) -> bool:
+        if box is not None:
+            try:
+                class_names = str(await _wait(box.get_attribute("class"), timeout_seconds=2.0) or "")
+            except Exception:
+                class_names = ""
+            if "un-watch" in class_names:
+                return True
+
+        skipped = await self._query_selector(item, "session_skipped")
+        return skipped is not None
+
+    def _build_session_selector(self, session_id: str) -> str:
+        escaped = session_id.replace("\\", "\\\\").replace('"', '\\"')
+        session_box_selector = SELECTORS["session_box"].primary
+        return f'{session_box_selector}[{SESSION_ID_ATTRIBUTE}="{escaped}"]'
+
+    async def _extract_session_id(
+        self,
+        item: ElementHandle,
+        box: ElementHandle | None,
+        buyer_name: str,
+        index: int,
+    ) -> str:
+        handle = box or item
+        try:
+            session_id = str(await _wait(handle.get_attribute(SESSION_ID_ATTRIBUTE), timeout_seconds=2.0) or "").strip()
+        except Exception:
+            session_id = ""
+        if session_id:
+            return session_id
+        if buyer_name:
+            return buyer_name
+        return f"session-{index + 1}"
+
+    async def _extract_remaining_seconds(self, item: ElementHandle) -> int:
+        countdown_text = await self._get_text(item, "session_countdown")
+        if not countdown_text:
+            return 180
+        matches = re.findall(r"\d+", countdown_text)
+        if not matches:
+            return 180
+        return int(matches[0])
+
+    async def _parse_session_item(
+        self,
+        item: ElementHandle,
+        index: int,
+        *,
+        is_timeout: bool,
+    ) -> SessionInfo | None:
+        box = await self._query_selector(item, "session_box")
+        if await self._is_skipped_session(item, box):
+            return None
+
+        buyer_name = await self._get_text(item, "buyer_name")
+        last_message = await self._get_text(item, "last_message")
+        session_id = await self._extract_session_id(item, box, buyer_name, index)
+        remaining_seconds = 0 if is_timeout else await self._extract_remaining_seconds(item)
+        unread = is_timeout or await self._query_selector(item, "unread_badge") is not None
+        session_selector = ""
+        if session_id and session_id != buyer_name:
+            session_selector = self._build_session_selector(session_id)
+            self._session_selectors[session_id] = session_selector
+        if buyer_name:
+            self._session_names[session_id] = buyer_name
+
+        return SessionInfo(
+            session_id=session_id,
+            buyer_id=session_id,
+            buyer_name=buyer_name or session_id,
+            last_message=last_message,
+            unread=unread,
+            session_selector=session_selector,
+            is_timeout=is_timeout,
+            remaining_seconds=remaining_seconds,
+        )
+
+    async def _fallback_switch_to_session(self, session_id: str) -> bool:
+        items = await self._query_selector_all(self._page, "session_item")
+        for item in items:
+            box = await self._query_selector(item, "session_box")
+            try:
+                item_session_id = str(
+                    await _wait((box or item).get_attribute(SESSION_ID_ATTRIBUTE), timeout_seconds=2.0) or ""
+                ).strip()
+            except Exception:
+                item_session_id = ""
+
+            name_el = await self._query_selector(item, "buyer_name")
+            buyer_name = (await _wait(name_el.inner_text())).strip() if name_el is not None else ""
+            if session_id not in {item_session_id, buyer_name}:
+                continue
+            await self._human_simulator.bezier_click(box or item)
+            return True
+        return False
+
+    def _build_raw_message(
+        self,
+        *,
+        session_id: str,
+        buyer_name: str,
+        content: str,
+        sender: str,
+        timestamp: str,
+        message_type: str,
+        message_index: str,
+        fallback_index: int,
+    ) -> RawMessage:
+        normalized_index = message_index or f"{message_type or sender}-{fallback_index}"
+        content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()[:8]
+        dedup_key = f"{self._shop_id}:{session_id}:{normalized_index}:{content_hash}"
+        return RawMessage(
+            session_id=session_id,
+            buyer_id=session_id,
+            buyer_name=buyer_name or session_id,
+            content=content,
+            sender=sender,
+            timestamp=timestamp,
+            dedup_key=dedup_key,
+            message_type=message_type,
+        )
+
+    async def _parse_message_item(
+        self,
+        item: ElementHandle,
+        *,
+        session_id: str,
+        buyer_name: str,
+        timestamp: str,
+        fallback_index: int,
+    ) -> RawMessage | None:
+        message_index = ""
+        index_element = await self._query_selector(item, "message_index")
+        if index_element is not None:
+            try:
+                message_index = str(
+                    await _wait(index_element.get_attribute(MESSAGE_INDEX_ATTRIBUTE), timeout_seconds=2.0) or ""
+                ).strip()
+            except Exception:
+                message_index = ""
+
+        sender = ""
+        message_type = ""
+        content = ""
+
+        if await self._query_selector(item, "system_item") is not None:
+            sender = "system"
+            message_type = "system"
+            content = await self._get_text(item, "system_text")
+        elif await self._query_selector(item, "good_card") is not None:
+            sender = "good_card"
+            message_type = "good_card"
+            good_name = await self._get_text(item, "good_name")
+            good_price = await self._get_text(item, "good_price")
+            good_id = await self._get_text(item, "good_id")
+            content = " | ".join(part for part in (good_name, good_price, good_id) if part) or "[商品卡片]"
+        elif await self._query_selector(item, "common_card") is not None:
+            sender = "common_card"
+            message_type = "common_card"
+            content = (await self._get_text(item, "message_text")) or "[推荐卡片]"
+        elif await self._query_selector(item, "buyer_item") is not None:
+            sender = "buyer"
+            message_type = "buyer"
+            content = await self._get_text(item, "message_text")
+        elif await self._query_selector(item, "robot_item") is not None:
+            sender = "robot"
+            message_type = "robot"
+            content = await self._get_text(item, "message_text")
+        elif await self._query_selector(item, "seller_item") is not None:
+            sender = "human"
+            message_type = "human"
+            content = await self._get_text(item, "message_text")
+
+        if not sender or not content:
+            return None
+
+        return self._build_raw_message(
+            session_id=session_id,
+            buyer_name=buyer_name,
+            content=content,
+            sender=sender,
+            timestamp=timestamp,
+            message_type=message_type,
+            message_index=message_index,
+            fallback_index=fallback_index,
+        )
 
     async def _query_selector(
         self,
@@ -631,47 +745,64 @@ class PddAdapter(BaseAdapter):
         return False
 
     async def get_session_list(self) -> list[SessionInfo]:
-        """读取左侧会话列表。"""
+        """读取左侧会话列表，优先处理超时会话和即将超时会话。"""
+        self._session_selectors.clear()
+        self._session_names.clear()
         sessions: list[SessionInfo] = []
-        items = await self._query_selector_all(self._page, "session_item")
-        for index, item in enumerate(items):
-            try:
-                name_el = await self._query_selector(item, "buyer_name")
-                buyer_name = (await _wait(name_el.inner_text())).strip() if name_el is not None else f"买家{index + 1}"
+        timeout_items = await self._query_selector_all(self._page, "session_timeout_item")
+        pending_items = await self._query_selector_all(self._page, "session_pending_item")
 
-                msg_el = await self._query_selector(item, "last_message")
-                last_message = (await _wait(msg_el.inner_text())).strip() if msg_el is not None else ""
+        if timeout_items or pending_items:
+            for index, item in enumerate(timeout_items):
+                try:
+                    session = await self._parse_session_item(item, index, is_timeout=True)
+                except Exception as exc:
+                    logger.warning("Failed to parse timeout session %s: %s", index, exc)
+                    continue
+                if session is not None:
+                    sessions.append(session)
 
-                unread_el = await self._query_selector(item, "unread_badge")
-                session_id = buyer_name or f"session-{index + 1}"
-                sessions.append(
-                    SessionInfo(
-                        session_id=session_id,
-                        buyer_id=session_id,
-                        buyer_name=buyer_name or session_id,
-                        last_message=last_message,
-                        unread=unread_el is not None,
-                    )
-                )
-            except Exception as exc:
-                logger.warning("Failed to parse session item %s: %s", index, exc)
+            base_index = len(timeout_items)
+            for index, item in enumerate(pending_items):
+                try:
+                    session = await self._parse_session_item(item, base_index + index, is_timeout=False)
+                except Exception as exc:
+                    logger.warning("Failed to parse pending session %s: %s", index, exc)
+                    continue
+                if session is not None:
+                    sessions.append(session)
+        else:
+            items = await self._query_selector_all(self._page, "session_item")
+            for index, item in enumerate(items):
+                try:
+                    session = await self._parse_session_item(item, index, is_timeout=False)
+                except Exception as exc:
+                    logger.warning("Failed to parse session item %s: %s", index, exc)
+                    continue
+                if session is not None:
+                    sessions.append(session)
+
+        sessions.sort(key=lambda session: (0 if session.is_timeout else 1, session.remaining_seconds, session.buyer_name))
         logger.info("Found %s sessions", len(sessions))
         return sessions
 
     async def switch_to_session(self, session_id: str) -> None:
         """点击左侧会话列表切换到指定会话。"""
-        items = await self._query_selector_all(self._page, "session_item")
-        for item in items:
-            name_el = await self._query_selector(item, "buyer_name")
-            if name_el is None:
-                continue
-            name = (await _wait(name_el.inner_text())).strip()
-            if name == session_id:
-                await self._human_simulator.bezier_click(item)
+        selector = self._session_selectors.get(session_id, "")
+        if selector:
+            element = await self._query_selector_by_value(self._page, selector)
+            if element is not None:
+                await self._human_simulator.bezier_click(element)
                 self._current_session_id = session_id
-                await _wait(self._page.wait_for_timeout(500), timeout_seconds=2.0)
+                await _wait(self._page.wait_for_timeout(1000), timeout_seconds=2.0)
                 logger.info("Switched to session: %s", session_id)
                 return
+
+        if await self._fallback_switch_to_session(session_id):
+            self._current_session_id = session_id
+            await _wait(self._page.wait_for_timeout(1000), timeout_seconds=2.0)
+            logger.info("Switched to session via fallback: %s", session_id)
+            return
         logger.warning("Session not found: %s", session_id)
 
     async def fetch_messages(self, session_id: str) -> list[RawMessage]:
@@ -688,42 +819,61 @@ class PddAdapter(BaseAdapter):
             scope = self._chat_frame or self._page
 
         messages: list[RawMessage] = []
+        buyer_name = self._session_names.get(session_id, session_id)
         now = datetime.now().isoformat()
-        all_items: list[tuple[ElementHandle, str]] = []
-        for selector in (".buyer-item", ".seller-item", ".robot-item"):
+        ordered_items = await self._query_selector_all(scope, "message_list_item")
+
+        if ordered_items:
+            for index, item in enumerate(ordered_items):
+                try:
+                    message = await self._parse_message_item(
+                        item,
+                        session_id=session_id,
+                        buyer_name=buyer_name,
+                        timestamp=now,
+                        fallback_index=index,
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to parse ordered message %s: %s", index, exc)
+                    continue
+                if message is not None:
+                    messages.append(message)
+            logger.debug("Fetched %s ordered messages from session %s", len(messages), session_id)
+            return messages
+
+        all_items: list[tuple[ElementHandle, str, str]] = []
+        for selector_key, sender, message_type in (
+            ("buyer_item", "buyer", "buyer"),
+            ("seller_item", "human", "human"),
+            ("robot_item", "robot", "robot"),
+        ):
             try:
-                found = await _wait(scope.query_selector_all(selector), timeout_seconds=5.0)
+                found = await self._query_selector_all(scope, selector_key)
             except Exception:
                 continue
-            sender = "buyer" if "buyer" in selector else "human"
-            all_items.extend((item, sender) for item in found)
+            all_items.extend((item, sender, message_type) for item in found)
 
-        for index, (item, sender) in enumerate(all_items):
+        for index, (item, sender, message_type) in enumerate(all_items):
             try:
-                text_el = await self._query_selector(item, "message_text")
-                if text_el is None:
-                    continue
-
-                content = (await _wait(text_el.inner_text())).strip()
+                content = await self._get_text(item, "message_text")
                 if not content:
                     continue
-
-                index_el = await self._query_selector(item, "message_index")
-                msg_index = ""
-                if index_el is not None:
-                    msg_index = (await _wait(index_el.get_attribute("index"))) or ""
-
-                content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()[:8]
-                dedup_key = f"{self._shop_id}:{session_id}:{msg_index}:{content_hash}"
+                index_element = await self._query_selector(item, "message_index")
+                message_index = ""
+                if index_element is not None:
+                    message_index = str(
+                        await _wait(index_element.get_attribute(MESSAGE_INDEX_ATTRIBUTE), timeout_seconds=2.0) or ""
+                    ).strip()
                 messages.append(
-                    RawMessage(
+                    self._build_raw_message(
                         session_id=session_id,
-                        buyer_id=session_id,
-                        buyer_name=session_id,
+                        buyer_name=buyer_name,
                         content=content,
                         sender=sender,
                         timestamp=now,
-                        dedup_key=dedup_key,
+                        message_type=message_type,
+                        message_index=message_index,
+                        fallback_index=index,
                     )
                 )
             except Exception as exc:
