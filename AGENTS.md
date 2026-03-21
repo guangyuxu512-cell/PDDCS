@@ -14,6 +14,8 @@
 8. **所有 await 必须有超时** — 禁止无超时的异步操作
 9. **消息去重** — 所有适配器必须在处理前做 Redis 去重检查
 10. **密码 / Cookie 禁止明文存储** — 必须使用 `backend/core/crypto.py` 加密后写入数据库，接口只返回 `hasPassword` / `cookieFingerprint`
+11. **Playwright 对象不可跨进程传递** — `Page` / `BrowserContext` / `Browser` 只能在所属 Worker 进程内使用
+12. **DB 连接不可跨进程共享** — 每个进程必须独立建立自己的数据库连接
 
 ## 1. 项目简介
 
