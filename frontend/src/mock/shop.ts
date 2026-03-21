@@ -19,6 +19,8 @@ let shops: Shop[] = [
     todayServedCount: 86,
     lastActiveAt: '2026-03-19T10:28:00+08:00',
     cookieValid: true,
+    hasPassword: true,
+    cookieFingerprint: 'a1b2c3d4',
   },
   {
     id: 'shop-pdd-002',
@@ -29,6 +31,8 @@ let shops: Shop[] = [
     todayServedCount: 31,
     lastActiveAt: '2026-03-19T08:41:00+08:00',
     cookieValid: true,
+    hasPassword: true,
+    cookieFingerprint: 'b2c3d4e5',
   },
   {
     id: 'shop-dy-001',
@@ -39,6 +43,8 @@ let shops: Shop[] = [
     todayServedCount: 64,
     lastActiveAt: '2026-03-19T10:11:00+08:00',
     cookieValid: true,
+    hasPassword: true,
+    cookieFingerprint: 'c3d4e5f6',
   },
   {
     id: 'shop-dy-002',
@@ -49,6 +55,8 @@ let shops: Shop[] = [
     todayServedCount: 52,
     lastActiveAt: '2026-03-19T09:56:00+08:00',
     cookieValid: false,
+    hasPassword: true,
+    cookieFingerprint: '',
   },
   {
     id: 'shop-qn-001',
@@ -59,6 +67,8 @@ let shops: Shop[] = [
     todayServedCount: 23,
     lastActiveAt: '2026-03-19T07:32:00+08:00',
     cookieValid: true,
+    hasPassword: true,
+    cookieFingerprint: 'd4e5f6a7',
   },
   {
     id: 'shop-qn-002',
@@ -69,6 +79,8 @@ let shops: Shop[] = [
     todayServedCount: 47,
     lastActiveAt: '2026-03-19T10:05:00+08:00',
     cookieValid: true,
+    hasPassword: true,
+    cookieFingerprint: 'e5f6a7b8',
   },
   {
     id: 'shop-qn-003',
@@ -79,6 +91,8 @@ let shops: Shop[] = [
     todayServedCount: 15,
     lastActiveAt: '2026-03-19T06:58:00+08:00',
     cookieValid: false,
+    hasPassword: false,
+    cookieFingerprint: '',
   },
 ];
 

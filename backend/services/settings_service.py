@@ -6,8 +6,11 @@ import json
 from datetime import datetime
 from typing import Any
 
-from backend.db.database import get_db
+from sqlalchemy import select
+
+from backend.db.database import get_sync_session
 from backend.db.models import SystemSettings
+from backend.db.orm import SystemSettingTable
 
 
 _JSON_FIELDS = {"defaultKeywords"}
@@ -20,14 +23,13 @@ _NUMBER_FIELDS: dict[str, type[int] | type[float]] = {
 
 
 def get_settings() -> SystemSettings:
-    """读取系统设置。"""
-    with get_db() as conn:
-        rows = conn.execute("SELECT key, value FROM system_settings").fetchall()
+    with get_sync_session() as session:
+        rows = session.scalars(select(SystemSettingTable).order_by(SystemSettingTable.key)).all()
 
     raw: dict[str, Any] = {}
     for row in rows:
-        key = row["key"]
-        value = row["value"]
+        key = row.key
+        value = row.value
         if key in _JSON_FIELDS:
             raw[key] = json.loads(value) if value else []
         elif key in _NUMBER_FIELDS:
@@ -39,28 +41,24 @@ def get_settings() -> SystemSettings:
 
 
 def save_settings(body: dict[str, Any]) -> SystemSettings:
-    """保存系统设置。"""
     now = datetime.now().isoformat()
-    with get_db() as conn:
+    with get_sync_session() as session:
         for key, value in body.items():
+            row = session.get(SystemSettingTable, key)
+            if row is None:
+                row = SystemSettingTable(key=key, value="", updated_at=now)
+                session.add(row)
+
             if key in _JSON_FIELDS:
-                db_value = json.dumps(value, ensure_ascii=False) if isinstance(value, list) else str(value)
+                row.value = json.dumps(value, ensure_ascii=False) if isinstance(value, list) else str(value)
             else:
-                db_value = "" if value is None else str(value)
-            conn.execute(
-                """
-                INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,?)
-                ON CONFLICT(key) DO UPDATE SET
-                    value=excluded.value,
-                    updated_at=excluded.updated_at
-                """,
-                (key, db_value, now),
-            )
+                row.value = "" if value is None else str(value)
+            row.updated_at = now
+
     return get_settings()
 
 
 def test_llm_connection(api_base_url: str, api_key: str, model: str) -> dict[str, Any]:
-    """占位实现：只校验参数完整性。"""
     if not api_base_url.strip() or not api_key.strip() or not model.strip():
         return {"ok": False, "message": "参数不完整"}
     return {"ok": True, "message": f"模型 {model} 连接正常（占位）"}

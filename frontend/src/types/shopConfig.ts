@@ -12,11 +12,11 @@ export interface ShopConfig {
   shopId: string;
   name: string;
   username: string;
-  password: string;
   platform: Platform;
   cookieValid: boolean;
-  cookieLastRefresh: string;
   aiEnabled: boolean;
+  hasPassword: boolean;
+  cookieFingerprint: string;
   llmMode: 'global' | 'custom';
   customApiKey?: string;
   customModel?: string;
@@ -28,4 +28,9 @@ export interface ShopConfig {
   escalationFallbackMsg: string;
   autoRestart: boolean;
   forceOnline: boolean;
+}
+
+export interface ShopConfigSavePayload
+  extends Omit<ShopConfig, 'hasPassword' | 'cookieFingerprint'> {
+  password?: string;
 }

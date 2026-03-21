@@ -9,6 +9,8 @@ export interface Shop {
   todayServedCount: number;
   lastActiveAt: string;
   cookieValid: boolean;
+  hasPassword: boolean;
+  cookieFingerprint: string;
 }
 
 export const platformLabel: Record<Platform, string> = {

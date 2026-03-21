@@ -50,6 +50,7 @@ REDIS_MAX_CONNECTIONS=20
 
 # ============ SQLite / 数据库 ============
 DATABASE_URL=sqlite+aiosqlite:///data/db/main.db
+ENCRYPTION_KEY=                                  # 必填；生成命令见下方说明
 
 # ============ LLM 全局默认 ============
 LLM_API_URL=https://api.deepseek.com/v1/chat/completions
@@ -113,3 +114,32 @@ settings = AppSettings()
 - **禁止**在代码中写死 URL、Key、路径、间隔等任何可变值
 - YAML 配置用于**业务规则**（选择器、轮询间隔、转人工规则），ENV 用于**基础设施**（端口、密钥、路径）
 - YAML 中的值也可以引用 ENV 变量：`${KNOWLEDGE_BASE_PATH}`
+
+## 2.4 敏感数据配置
+
+- `ENCRYPTION_KEY` 必填，用于 Fernet 对称加密；未配置时服务启动应直接失败
+- 生成方式：
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+- 该密钥必须进入密钥管理系统或运维安全仓库，不能重新生成后直接覆盖线上值，否则历史加密数据无法解密
+
+## 2.5 数据库迁移
+
+- 数据库结构统一通过 Alembic 维护，不再依赖 `backend/db/schema.sql` 作为运行时建表入口
+- 初始化 / 升级命令：
+
+```bash
+alembic upgrade head
+```
+
+- 当前默认 `DATABASE_URL=sqlite+aiosqlite:///data/db/main.db`
+- 切换 MySQL 只需改为 SQLAlchemy URI，例如：
+
+```bash
+DATABASE_URL=mysql+aiomysql://user:password@127.0.0.1:3306/pddcs
+```
+
+- 应用启动时会自动执行迁移；部署前仍建议手动执行一次 `alembic upgrade head` 验证环境与权限

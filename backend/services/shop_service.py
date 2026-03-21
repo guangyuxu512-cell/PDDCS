@@ -7,244 +7,207 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from backend.db.database import get_db
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from backend.core.crypto import encrypt, hash_password
+from backend.db.database import get_sync_session
 from backend.db.models import Shop, ShopConfig
+from backend.db.orm import ShopConfigTable, ShopCookieTable, ShopTable
 
 
 def _iso_now() -> str:
     return datetime.now().isoformat()
 
 
-def _default_if_none(data: dict[str, Any], key: str, value: Any) -> None:
-    if data.get(key) is None:
-        data[key] = value
+def _ensure_shop_config_row(shop: ShopTable) -> ShopConfigTable:
+    if shop.config is None:
+        shop.config = ShopConfigTable(
+            shop_id=shop.id,
+            updated_at=_iso_now(),
+        )
+    return shop.config
+
+
+def _shop_to_model(shop: ShopTable, cookie: ShopCookieTable | None = None) -> Shop:
+    resolved_cookie = cookie if cookie is not None else shop.cookie
+    return Shop(
+        id=shop.id,
+        name=shop.name,
+        platform=shop.platform,
+        is_online=shop.is_online,
+        ai_enabled=shop.ai_enabled,
+        today_served_count=shop.today_served_count,
+        last_active_at=shop.last_active_at,
+        cookie_valid=shop.cookie_valid,
+        has_password=bool(shop.password_hash or shop.password),
+        cookie_fingerprint=resolved_cookie.cookie_fingerprint if resolved_cookie is not None else "",
+    )
+
+
+def _shop_config_to_model(shop: ShopTable, config: ShopConfigTable, cookie: ShopCookieTable | None = None) -> ShopConfig:
+    resolved_cookie = cookie if cookie is not None else shop.cookie
+    return ShopConfig(
+        shop_id=shop.id,
+        name=shop.name,
+        username=shop.username,
+        platform=shop.platform,
+        cookie_valid=shop.cookie_valid,
+        ai_enabled=shop.ai_enabled,
+        has_password=bool(shop.password_hash or shop.password),
+        cookie_fingerprint=resolved_cookie.cookie_fingerprint if resolved_cookie is not None else "",
+        llm_mode=config.llm_mode,
+        custom_api_key=config.custom_api_key,
+        custom_model=config.custom_model,
+        reply_style_note=config.reply_style_note,
+        knowledge_paths=config.knowledge_paths,
+        use_global_knowledge=config.use_global_knowledge,
+        human_agent_name=config.human_agent_name,
+        escalation_rules=config.escalation_rules,
+        escalation_fallback_msg=config.escalation_fallback_msg,
+        auto_restart=config.auto_restart,
+        force_online=config.force_online,
+    )
 
 
 def list_shops() -> list[Shop]:
-    """查询店铺列表。"""
-    with get_db() as conn:
-        rows = conn.execute("SELECT * FROM shops ORDER BY created_at DESC").fetchall()
-    return [Shop.model_validate(dict(row)) for row in rows]
+    with get_sync_session() as session:
+        shops = session.scalars(
+            select(ShopTable)
+            .options(selectinload(ShopTable.cookie))
+            .order_by(ShopTable.created_at.desc())
+        ).all()
+        return [_shop_to_model(shop) for shop in shops]
 
 
 def create_shop(name: str, platform: Literal["pdd"], username: str, password: str) -> Shop:
-    """创建店铺并插入默认配置。"""
     shop_id = str(uuid.uuid4())
     now = _iso_now()
+    encrypted_password = encrypt(password)
+    password_hash = hash_password(password)
 
-    with get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO shops (
-                id,
-                name,
-                platform,
-                username,
-                password,
-                is_online,
-                ai_enabled,
-                cookie_valid,
-                today_served_count,
-                last_active_at,
-                created_at,
-                updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                shop_id,
-                name,
-                platform,
-                username,
-                password,
-                0,
-                0,
-                0,
-                0,
-                "",
-                now,
-                now,
-            ),
+    with get_sync_session() as session:
+        shop = ShopTable(
+            id=shop_id,
+            name=name,
+            platform=platform,
+            username=username,
+            password="",
+            password_encrypted=encrypted_password,
+            password_hash=password_hash,
+            is_online=False,
+            ai_enabled=False,
+            cookie_valid=False,
+            cookie_last_refresh="",
+            today_served_count=0,
+            last_active_at="",
+            created_at=now,
+            updated_at=now,
         )
-        conn.execute("INSERT INTO shop_configs (shop_id, updated_at) VALUES (?,?)", (shop_id, now))
-        row = conn.execute("SELECT * FROM shops WHERE id=?", (shop_id,)).fetchone()
-
-    if row is None:
-        raise RuntimeError("创建店铺失败")
-
-    return Shop.model_validate(dict(row))
+        shop.config = ShopConfigTable(shop_id=shop_id, updated_at=now)
+        session.add(shop)
+        session.flush()
+        session.refresh(shop)
+        return _shop_to_model(shop)
 
 
 def delete_shop(shop_id: str) -> bool:
-    """删除店铺。"""
-    with get_db() as conn:
-        cursor = conn.execute("DELETE FROM shops WHERE id=?", (shop_id,))
-    return cursor.rowcount > 0
+    with get_sync_session() as session:
+        shop = session.get(ShopTable, shop_id)
+        if shop is None:
+            return False
+        session.delete(shop)
+        return True
 
 
 def toggle_ai(shop_id: str, enabled: bool) -> Shop | None:
-    """更新店铺 AI 开关。"""
-    with get_db() as conn:
-        cursor = conn.execute(
-            "UPDATE shops SET ai_enabled=?, updated_at=? WHERE id=?",
-            (int(enabled), _iso_now(), shop_id),
-        )
-        if cursor.rowcount == 0:
+    with get_sync_session() as session:
+        shop = session.get(ShopTable, shop_id)
+        if shop is None:
             return None
-        row = conn.execute("SELECT * FROM shops WHERE id=?", (shop_id,)).fetchone()
-    return Shop.model_validate(dict(row)) if row is not None else None
+
+        shop.ai_enabled = enabled
+        shop.updated_at = _iso_now()
+        session.flush()
+        return _shop_to_model(shop)
 
 
 def toggle_status(shop_id: str) -> Shop | None:
-    """翻转店铺在线状态。"""
-    with get_db() as conn:
-        cursor = conn.execute(
-            (
-                "UPDATE shops "
-                "SET is_online = CASE WHEN is_online=1 THEN 0 ELSE 1 END, updated_at=? "
-                "WHERE id=?"
-            ),
-            (_iso_now(), shop_id),
-        )
-        if cursor.rowcount == 0:
+    with get_sync_session() as session:
+        shop = session.get(ShopTable, shop_id)
+        if shop is None:
             return None
-        row = conn.execute("SELECT * FROM shops WHERE id=?", (shop_id,)).fetchone()
-    return Shop.model_validate(dict(row)) if row is not None else None
+
+        shop.is_online = not shop.is_online
+        shop.updated_at = _iso_now()
+        session.flush()
+        return _shop_to_model(shop)
 
 
 def scan_desktop_windows() -> list[Shop]:
-    """
-    桌面窗口扫描占位实现。
-
-    后续实现方式：
-    1. 枚举所有顶层窗口 (EnumWindows)
-    2. 匹配标题: "千牛工作台"/"AliWorkbench" -> qianniu, "飞鸽"/"抖店" -> douyin
-    3. 记录 hwnd，提取店铺名
-    4. UPSERT 到 shops 表
-    5. 返回新发现的店铺列表
-    """
     return []
 
 
 def get_shop_config(shop_id: str) -> ShopConfig | None:
-    """查询店铺配置，不存在配置行时自动创建默认配置。"""
-    query = """
-        SELECT
-            s.id AS shop_id_ref,
-            s.name,
-            s.username,
-            s.password,
-            s.platform,
-            s.cookie_valid,
-            s.cookie_last_refresh,
-            s.ai_enabled,
-            c.shop_id,
-            c.llm_mode,
-            c.custom_api_key,
-            c.custom_model,
-            c.reply_style_note,
-            c.knowledge_paths,
-            c.use_global_knowledge,
-            c.human_agent_name,
-            c.escalation_rules,
-            c.escalation_fallback_msg,
-            c.auto_restart,
-            c.force_online
-        FROM shops s
-        LEFT JOIN shop_configs c ON c.shop_id = s.id
-        WHERE s.id = ?
-    """
-
-    with get_db() as conn:
-        row = conn.execute(query, (shop_id,)).fetchone()
-        if row is None:
+    with get_sync_session() as session:
+        shop = session.scalar(
+            select(ShopTable)
+            .options(
+                selectinload(ShopTable.config),
+                selectinload(ShopTable.cookie),
+            )
+            .where(ShopTable.id == shop_id)
+        )
+        if shop is None:
             return None
 
-        data = dict(row)
-        if data.get("shop_id") is None:
-            conn.execute("INSERT INTO shop_configs (shop_id) VALUES (?)", (shop_id,))
-            data["shop_id"] = shop_id
-
-        data.pop("shop_id_ref", None)
-        _default_if_none(data, "llm_mode", "global")
-        _default_if_none(data, "custom_api_key", "")
-        _default_if_none(data, "custom_model", "")
-        _default_if_none(data, "reply_style_note", "")
-        _default_if_none(data, "knowledge_paths", "[]")
-        _default_if_none(data, "use_global_knowledge", 1)
-        _default_if_none(data, "human_agent_name", "")
-        _default_if_none(data, "escalation_rules", "[]")
-        _default_if_none(data, "escalation_fallback_msg", "")
-        _default_if_none(data, "auto_restart", 0)
-        _default_if_none(data, "force_online", 0)
-
-    return ShopConfig.model_validate(data)
+        config = _ensure_shop_config_row(shop)
+        session.flush()
+        return _shop_config_to_model(shop, config)
 
 
 def update_shop_config(shop_id: str, body: dict[str, Any]) -> ShopConfig | None:
-    """更新店铺基础信息和配置。"""
     now = _iso_now()
 
-    with get_db() as conn:
-        cursor = conn.execute(
-            "UPDATE shops SET name=?, username=?, password=?, ai_enabled=?, updated_at=? WHERE id=?",
-            (
-                body.get("name", ""),
-                body.get("username", ""),
-                body.get("password", ""),
-                int(body.get("aiEnabled", False)),
-                now,
-                shop_id,
-            ),
+    with get_sync_session() as session:
+        shop = session.scalar(
+            select(ShopTable)
+            .options(
+                selectinload(ShopTable.config),
+                selectinload(ShopTable.cookie),
+            )
+            .where(ShopTable.id == shop_id)
         )
-        if cursor.rowcount == 0:
+        if shop is None:
             return None
 
-        conn.execute(
-            """
-            INSERT INTO shop_configs (
-                shop_id,
-                llm_mode,
-                custom_api_key,
-                custom_model,
-                reply_style_note,
-                knowledge_paths,
-                use_global_knowledge,
-                human_agent_name,
-                escalation_rules,
-                escalation_fallback_msg,
-                auto_restart,
-                force_online,
-                updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(shop_id) DO UPDATE SET
-                llm_mode=excluded.llm_mode,
-                custom_api_key=excluded.custom_api_key,
-                custom_model=excluded.custom_model,
-                reply_style_note=excluded.reply_style_note,
-                knowledge_paths=excluded.knowledge_paths,
-                use_global_knowledge=excluded.use_global_knowledge,
-                human_agent_name=excluded.human_agent_name,
-                escalation_rules=excluded.escalation_rules,
-                escalation_fallback_msg=excluded.escalation_fallback_msg,
-                auto_restart=excluded.auto_restart,
-                force_online=excluded.force_online,
-                updated_at=excluded.updated_at
-            """,
-            (
-                shop_id,
-                body.get("llmMode", "global"),
-                body.get("customApiKey", ""),
-                body.get("customModel", ""),
-                body.get("replyStyleNote", ""),
-                json.dumps(body.get("knowledgePaths", []), ensure_ascii=False),
-                int(body.get("useGlobalKnowledge", True)),
-                body.get("humanAgentName", ""),
-                json.dumps(body.get("escalationRules", []), ensure_ascii=False),
-                body.get("escalationFallbackMsg", ""),
-                int(body.get("autoRestart", False)),
-                int(body.get("forceOnline", False)),
-                now,
-            ),
-        )
+        config = _ensure_shop_config_row(shop)
 
-    return get_shop_config(shop_id)
+        shop.name = str(body.get("name", shop.name))
+        shop.username = str(body.get("username", shop.username))
+        shop.ai_enabled = bool(body.get("aiEnabled", shop.ai_enabled))
+        shop.updated_at = now
+
+        raw_password = str(body.get("password", "") or "").strip()
+        if raw_password:
+            shop.password = ""
+            shop.password_encrypted = encrypt(raw_password)
+            shop.password_hash = hash_password(raw_password)
+
+        config.llm_mode = str(body.get("llmMode", config.llm_mode or "global"))
+        config.custom_api_key = str(body.get("customApiKey", config.custom_api_key or ""))
+        config.custom_model = str(body.get("customModel", config.custom_model or ""))
+        config.reply_style_note = str(body.get("replyStyleNote", config.reply_style_note or ""))
+        config.knowledge_paths = json.dumps(body.get("knowledgePaths", []), ensure_ascii=False)
+        config.use_global_knowledge = bool(body.get("useGlobalKnowledge", config.use_global_knowledge))
+        config.human_agent_name = str(body.get("humanAgentName", config.human_agent_name or ""))
+        config.escalation_rules = json.dumps(body.get("escalationRules", []), ensure_ascii=False)
+        config.escalation_fallback_msg = str(
+            body.get("escalationFallbackMsg", config.escalation_fallback_msg or "")
+        )
+        config.auto_restart = bool(body.get("autoRestart", config.auto_restart))
+        config.force_online = bool(body.get("forceOnline", config.force_online))
+        config.updated_at = now
+
+        session.flush()
+        return _shop_config_to_model(shop, config)

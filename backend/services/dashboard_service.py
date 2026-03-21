@@ -2,45 +2,54 @@
 
 from __future__ import annotations
 
-from backend.db.database import get_db
+from sqlalchemy import exists, func, select
+
+from backend.db.database import get_sync_session
 from backend.db.models import DashboardSummary
+from backend.db.orm import EscalationLogTable, MessageTable, SessionTable
 
 
 def get_summary() -> DashboardSummary:
-    """聚合仪表盘摘要数据。"""
-    with get_db() as conn:
-        today_served = conn.execute("SELECT COUNT(DISTINCT session_id) FROM messages").fetchone()[0] or 0
-        escalation_count = conn.execute("SELECT COUNT(*) FROM escalation_logs").fetchone()[0] or 0
-        ai_replies = conn.execute("SELECT COUNT(*) FROM messages WHERE sender='ai'").fetchone()[0] or 0
-        total_replies = conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE sender IN ('ai','human')"
-        ).fetchone()[0] or 0
-        unreplied_count = conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM sessions s
-            WHERE EXISTS (
-                SELECT 1
-                FROM messages buyer_messages
-                WHERE buyer_messages.session_id = s.id
-                  AND buyer_messages.sender = 'buyer'
+    last_sender_subquery = (
+        select(MessageTable.sender)
+        .where(MessageTable.session_id == SessionTable.id)
+        .order_by(MessageTable.created_at.desc(), MessageTable.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    buyer_exists = exists(
+        select(1).where(
+            MessageTable.session_id == SessionTable.id,
+            MessageTable.sender == "buyer",
+        )
+    )
+
+    with get_sync_session() as session:
+        today_served = session.scalar(select(func.count(func.distinct(MessageTable.session_id)))) or 0
+        escalation_count = session.scalar(select(func.count()).select_from(EscalationLogTable)) or 0
+        ai_replies = session.scalar(
+            select(func.count()).select_from(MessageTable).where(MessageTable.sender == "ai")
+        ) or 0
+        total_replies = session.scalar(
+            select(func.count())
+            .select_from(MessageTable)
+            .where(MessageTable.sender.in_(("ai", "human")))
+        ) or 0
+        unreplied_count = session.scalar(
+            select(func.count())
+            .select_from(SessionTable)
+            .where(
+                buyer_exists,
+                func.coalesce(last_sender_subquery, "").not_in(("ai", "human")),
             )
-              AND COALESCE((
-                SELECT last_message.sender
-                FROM messages last_message
-                WHERE last_message.session_id = s.id
-                ORDER BY last_message.created_at DESC, last_message.id DESC
-                LIMIT 1
-              ), '') NOT IN ('ai', 'human')
-            """
-        ).fetchone()[0] or 0
+        ) or 0
 
     ai_reply_rate = round(ai_replies / total_replies, 4) if total_replies else 0.0
     return DashboardSummary(
-        today_served_count=today_served,
+        today_served_count=int(today_served),
         ai_reply_rate=ai_reply_rate,
-        escalation_count=escalation_count,
+        escalation_count=int(escalation_count),
         avg_first_response_ms=0,
-        unreplied_count=unreplied_count,
+        unreplied_count=int(unreplied_count),
         yesterday_served_count=0,
     )

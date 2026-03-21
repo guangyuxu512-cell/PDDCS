@@ -7,22 +7,24 @@ CREATE TABLE IF NOT EXISTS shops (
     platform            TEXT NOT NULL CHECK(platform IN ('pdd','douyin','qianniu')),
     username            TEXT NOT NULL DEFAULT '',
     password            TEXT NOT NULL DEFAULT '',
+    password_encrypted  TEXT NOT NULL DEFAULT '',
+    password_hash       TEXT NOT NULL DEFAULT '',
     is_online           INTEGER NOT NULL DEFAULT 0,
     ai_enabled          INTEGER NOT NULL DEFAULT 0,
     cookie_valid        INTEGER NOT NULL DEFAULT 0,
     cookie_last_refresh TEXT NOT NULL DEFAULT '',
     today_served_count  INTEGER NOT NULL DEFAULT 0,
     last_active_at      TEXT NOT NULL DEFAULT '',
-    created_at          TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at          TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS shop_configs (
     shop_id                 TEXT PRIMARY KEY REFERENCES shops(id) ON DELETE CASCADE,
     llm_mode                TEXT NOT NULL DEFAULT 'global' CHECK(llm_mode IN ('global','custom')),
-    custom_api_key          TEXT DEFAULT '',
-    custom_model            TEXT DEFAULT '',
-    reply_style_note        TEXT DEFAULT '',
+    custom_api_key          TEXT NOT NULL DEFAULT '',
+    custom_model            TEXT NOT NULL DEFAULT '',
+    reply_style_note        TEXT NOT NULL DEFAULT '',
     knowledge_paths         TEXT NOT NULL DEFAULT '[]',
     use_global_knowledge    INTEGER NOT NULL DEFAULT 1,
     human_agent_name        TEXT NOT NULL DEFAULT '',
@@ -30,7 +32,14 @@ CREATE TABLE IF NOT EXISTS shop_configs (
     escalation_fallback_msg TEXT NOT NULL DEFAULT '',
     auto_restart            INTEGER NOT NULL DEFAULT 0,
     force_online            INTEGER NOT NULL DEFAULT 0,
-    updated_at              TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    updated_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS shop_cookies (
+    shop_id            TEXT PRIMARY KEY REFERENCES shops(id) ON DELETE CASCADE,
+    cookie_encrypted   TEXT NOT NULL DEFAULT '',
+    cookie_fingerprint TEXT NOT NULL DEFAULT '',
+    updated_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -42,24 +51,24 @@ CREATE TABLE IF NOT EXISTS sessions (
     buyer_name           TEXT NOT NULL DEFAULT '',
     status               TEXT NOT NULL DEFAULT 'ai_processing' CHECK(status IN ('ai_processing','escalated','closed')),
     last_message_preview TEXT NOT NULL DEFAULT '',
-    updated_at           TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    created_at           TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    updated_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_sessions_shop_id ON sessions(shop_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+CREATE INDEX IF NOT EXISTS ix_sessions_shop_id ON sessions(shop_id);
+CREATE INDEX IF NOT EXISTS ix_sessions_status ON sessions(status);
 
 CREATE TABLE IF NOT EXISTS messages (
     id          TEXT PRIMARY KEY,
     session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     sender      TEXT NOT NULL CHECK(sender IN ('buyer','ai','human')),
     content     TEXT NOT NULL,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     dedup_key   TEXT UNIQUE
 );
 
-CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
-CREATE INDEX IF NOT EXISTS idx_messages_dedup_key ON messages(dedup_key);
+CREATE INDEX IF NOT EXISTS ix_messages_session_id ON messages(session_id);
+CREATE INDEX IF NOT EXISTS ix_messages_dedup_key ON messages(dedup_key);
 
 CREATE TABLE IF NOT EXISTS knowledge_files (
     id          TEXT PRIMARY KEY,
@@ -69,14 +78,14 @@ CREATE TABLE IF NOT EXISTS knowledge_files (
     parent_path TEXT DEFAULT NULL,
     content     TEXT NOT NULL DEFAULT '',
     sort_order  INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS system_settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 INSERT OR IGNORE INTO system_settings (key, value) VALUES
@@ -101,8 +110,8 @@ CREATE TABLE IF NOT EXISTS escalation_logs (
     matched_content    TEXT NOT NULL DEFAULT '',
     target_agent       TEXT NOT NULL DEFAULT '',
     success            INTEGER NOT NULL DEFAULT 0,
-    created_at         TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_escalation_logs_shop_id ON escalation_logs(shop_id);
-CREATE INDEX IF NOT EXISTS idx_escalation_logs_created_at ON escalation_logs(created_at);
+CREATE INDEX IF NOT EXISTS ix_escalation_logs_session_id ON escalation_logs(session_id);
+CREATE INDEX IF NOT EXISTS ix_escalation_logs_shop_id ON escalation_logs(shop_id);

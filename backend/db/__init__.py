@@ -1,4 +1,4 @@
-from .database import get_db, init_database
+from .database import get_async_session, get_db, get_sync_session, init_database
 from .models import (
     ChatMessage,
     ChatSession,
@@ -23,6 +23,8 @@ __all__ = [
     "Shop",
     "ShopConfig",
     "SystemSettings",
+    "get_async_session",
     "get_db",
+    "get_sync_session",
     "init_database",
 ]

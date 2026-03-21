@@ -299,6 +299,8 @@ function handleConfigSaved(config: ShopConfig): void {
           name: config.name,
           aiEnabled: config.aiEnabled,
           cookieValid: config.cookieValid,
+          hasPassword: config.hasPassword,
+          cookieFingerprint: config.cookieFingerprint,
           platform: config.platform,
         }
       : shop,

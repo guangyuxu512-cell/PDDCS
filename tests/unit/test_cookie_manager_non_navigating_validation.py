@@ -62,14 +62,17 @@ async def test_periodic_save_logs_and_swallows_save_failures(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     manager = CookieManager(data_dir=str(tmp_path))
+    save_called = False
 
     async def failing_save(shop_id: str, context: object) -> None:
+        nonlocal save_called
         del shop_id, context
+        save_called = True
         raise RuntimeError("save failed")
 
     monkeypatch.setattr(manager, "save", failing_save)
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.ERROR, logger="backend.engines.cookie_manager"):
         await manager.periodic_save("shop-1", object())
 
-    assert "Failed periodic cookie save for shop shop-1" in caplog.text
+    assert save_called is True

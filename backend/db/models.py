@@ -1,4 +1,4 @@
-"""Pydantic 模型，字段别名与前端 TypeScript 类型一一对应。"""
+"""Pydantic API models with frontend-aligned camelCase aliases."""
 
 from __future__ import annotations
 
@@ -22,8 +22,6 @@ def _parse_json_value(value: Any) -> Any:
 
 
 class CamelModel(BaseModel):
-    """所有模型的基类，自动把 snake_case 转为 camelCase。"""
-
     model_config = ConfigDict(alias_generator=_snake_to_camel, populate_by_name=True)
 
     def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -48,6 +46,8 @@ class Shop(CamelModel):
     today_served_count: int = 0
     last_active_at: str = ""
     cookie_valid: bool = False
+    has_password: bool = False
+    cookie_fingerprint: str = ""
 
 
 class EscalationRule(CamelModel):
@@ -60,11 +60,11 @@ class ShopConfig(CamelModel):
     shop_id: str
     name: str
     username: str = ""
-    password: str = ""
     platform: Platform = "pdd"
     cookie_valid: bool = False
-    cookie_last_refresh: str = ""
     ai_enabled: bool = False
+    has_password: bool = False
+    cookie_fingerprint: str = ""
     llm_mode: Literal["global", "custom"] = "global"
     custom_api_key: str | None = ""
     custom_model: str | None = ""

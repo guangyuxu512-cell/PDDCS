@@ -31,9 +31,12 @@
               <span>店铺密码</span>
               <el-input
                 v-model="formState.password"
-                placeholder="请输入店铺登录密码"
+                placeholder="已有密码可以留空不更新"
                 show-password
               />
+              <small class="shop-edit-dialog__field-note">
+                {{ formState.hasPassword ? '已配置密码，留空则保持不变' : '当前未配置密码，保存前必须填写' }}
+              </small>
             </label>
             <div class="shop-edit-dialog__field shop-edit-dialog__field--full">
               <span>Cookie 状态</span>
@@ -41,7 +44,7 @@
                 <el-tag :type="formState.cookieValid ? 'success' : 'danger'" round>
                   {{ formState.cookieValid ? '有效' : '已过期' }}
                 </el-tag>
-                <span>上次刷新时间：{{ cookieLastRefreshText }}</span>
+                <span>Cookie 指纹：{{ cookieFingerprintText }}</span>
               </div>
             </div>
             <div class="shop-edit-dialog__field">
@@ -78,7 +81,7 @@
               <el-switch v-model="formState.aiEnabled" inline-prompt active-text="开" inactive-text="关" />
             </div>
             <label class="shop-edit-dialog__field">
-              <span>LLM 模型</span>
+              <span>LLM 模式</span>
               <el-select v-model="formState.llmMode">
                 <el-option label="使用全局默认" value="global" />
                 <el-option label="自定义" value="custom" />
@@ -108,7 +111,7 @@
               <el-input
                 v-model="formState.replyStyleNote"
                 :rows="3"
-                placeholder="例如：语气亲切，多用 emoji"
+                placeholder="例如：语气亲切、回复简洁、少用表情"
                 type="textarea"
               />
             </label>
@@ -146,7 +149,7 @@
           <div class="shop-edit-dialog__grid">
             <label class="shop-edit-dialog__field shop-edit-dialog__field--full">
               <span>人工客服账号名</span>
-              <el-input v-model="formState.humanAgentName" placeholder="请输入 RPA 转接的目标客服名" />
+              <el-input v-model="formState.humanAgentName" placeholder="请输入转接目标客服名称" />
             </label>
 
             <div class="shop-edit-dialog__field shop-edit-dialog__field--full">
@@ -173,7 +176,7 @@
               <el-input
                 v-model="formState.escalationFallbackMsg"
                 :rows="3"
-                placeholder="例如：亲，已为您转接人工客服，请稍等~"
+                placeholder="例如：亲，已为您转接人工客服，请稍等"
                 type="textarea"
               />
             </label>
@@ -201,6 +204,7 @@ import {
   type EscalationRule,
   type EscalationRuleType,
   type ShopConfig,
+  type ShopConfigSavePayload,
 } from '@/types/shopConfig';
 
 const props = defineProps<{
@@ -212,6 +216,12 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean];
   saved: [config: ShopConfig];
 }>();
+
+type ShopConfigForm = ShopConfigSavePayload & {
+  hasPassword: boolean;
+  cookieFingerprint: string;
+  password: string;
+};
 
 const platformOptions: Array<{ label: string; value: Platform }> = [
   { label: platformLabel.pdd, value: 'pdd' },
@@ -244,18 +254,14 @@ const saving = ref(false);
 const knowledgeLoading = ref(false);
 const testingCustomConnection = ref(false);
 const knowledgeFileOptions = ref<string[]>([]);
-const formState = ref<ShopConfig>(createEmptyConfig());
+const formState = ref<ShopConfigForm>(createEmptyConfig());
 
 const dialogVisible = computed({
   get: () => props.modelValue,
   set: (value: boolean) => emit('update:modelValue', value),
 });
 
-const cookieLastRefreshText = computed(() =>
-  formState.value.cookieLastRefresh
-    ? new Date(formState.value.cookieLastRefresh).toLocaleString('zh-CN')
-    : '--',
-);
+const cookieFingerprintText = computed(() => formState.value.cookieFingerprint || '--');
 
 watch(
   () => [props.modelValue, props.shopId] as const,
@@ -282,7 +288,7 @@ watch(
   },
 );
 
-function createEmptyConfig(): ShopConfig {
+function createEmptyConfig(): ShopConfigForm {
   return {
     shopId: '',
     name: '',
@@ -290,8 +296,9 @@ function createEmptyConfig(): ShopConfig {
     password: '',
     platform: 'pdd',
     cookieValid: false,
-    cookieLastRefresh: '',
     aiEnabled: false,
+    hasPassword: false,
+    cookieFingerprint: '',
     llmMode: 'global',
     customApiKey: '',
     customModel: '',
@@ -306,11 +313,13 @@ function createEmptyConfig(): ShopConfig {
   };
 }
 
-function normalizeConfig(config: ShopConfig): ShopConfig {
+function normalizeConfig(config: ShopConfig): ShopConfigForm {
   return {
     ...config,
     username: config.username ?? '',
-    password: config.password ?? '',
+    password: '',
+    hasPassword: config.hasPassword ?? false,
+    cookieFingerprint: config.cookieFingerprint ?? '',
     customApiKey: config.customApiKey ?? '',
     customModel: config.customModel ?? '',
     replyStyleNote: config.replyStyleNote ?? '',
@@ -376,7 +385,7 @@ async function handleSave(): Promise<void> {
     return;
   }
 
-  if (!formState.value.password.trim()) {
+  if (!formState.value.password.trim() && !formState.value.hasPassword) {
     ElMessage.error('店铺密码不能为空');
     return;
   }
@@ -389,9 +398,8 @@ async function handleSave(): Promise<void> {
   saving.value = true;
   try {
     const savedConfig = await saveShopConfig(props.shopId, normalizeSavePayload(formState.value));
-    const normalized = normalizeConfig(savedConfig);
-    formState.value = normalized;
-    emit('saved', normalized);
+    formState.value = normalizeConfig(savedConfig);
+    emit('saved', savedConfig);
     dialogVisible.value = false;
     ElMessage.success('店铺配置已保存');
   } catch (error) {
@@ -401,13 +409,17 @@ async function handleSave(): Promise<void> {
   }
 }
 
-function normalizeSavePayload(config: ShopConfig): ShopConfig {
+function normalizeSavePayload(config: ShopConfigForm): ShopConfigSavePayload {
+  const password = config.password.trim();
   return {
-    ...config,
     shopId: props.shopId ?? config.shopId,
     name: config.name.trim(),
     username: config.username.trim(),
-    password: config.password.trim(),
+    platform: config.platform,
+    cookieValid: config.cookieValid,
+    aiEnabled: config.aiEnabled,
+    llmMode: config.llmMode,
+    password: password || undefined,
     customApiKey: config.llmMode === 'custom' ? config.customApiKey?.trim() ?? '' : undefined,
     customModel: config.llmMode === 'custom' ? config.customModel?.trim() ?? '' : undefined,
     replyStyleNote: config.replyStyleNote?.trim() ?? '',

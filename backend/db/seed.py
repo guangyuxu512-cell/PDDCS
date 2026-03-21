@@ -7,6 +7,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta
 
+from backend.core.crypto import encrypt, hash_password
 from backend.db.database import get_db, init_database
 
 
@@ -26,6 +27,9 @@ def seed_database() -> None:
     init_database()
 
     now = datetime.now().replace(microsecond=0)
+    encrypted_password = encrypt("123456")
+    password_hash = hash_password("123456")
+
     shop_a_id = _stable_uuid("shop:pdd")
     shop_b_id = _stable_uuid("shop:douyin")
 
@@ -46,19 +50,23 @@ def seed_database() -> None:
                 platform,
                 username,
                 password,
+                password_encrypted,
+                password_hash,
                 is_online,
                 ai_enabled,
                 cookie_valid,
                 today_served_count,
                 last_active_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 shop_a_id,
                 "测试拼多多店铺",
                 "pdd",
                 "pdd_test",
-                "123456",
+                "",
+                encrypted_password,
+                password_hash,
                 1,
                 1,
                 1,
@@ -74,19 +82,23 @@ def seed_database() -> None:
                 platform,
                 username,
                 password,
+                password_encrypted,
+                password_hash,
                 is_online,
                 ai_enabled,
                 cookie_valid,
                 today_served_count,
                 last_active_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 shop_b_id,
                 "测试抖店",
                 "douyin",
                 "dy_test",
-                "123456",
+                "",
+                encrypted_password,
+                password_hash,
                 0,
                 0,
                 0,
@@ -111,7 +123,7 @@ def seed_database() -> None:
                 1,
                 "客服小王",
                 json.dumps(
-                    [{"id": "r1", "type": "keyword", "value": "退款,投诉"}],
+                    [{"id": "r1", "type": "keyword", "value": "退款|投诉"}],
                     ensure_ascii=False,
                 ),
             ),
@@ -205,7 +217,7 @@ def seed_database() -> None:
 
         messages = [
             ("message:1", session_1_id, "buyer", "你好，我买的东西还没发货", now - timedelta(minutes=4)),
-            ("message:2", session_1_id, "ai", "亲，帮您查一下订单状态，请稍等~", now - timedelta(minutes=3)),
+            ("message:2", session_1_id, "ai", "亲，帮您查一下订单状态，请稍等", now - timedelta(minutes=3)),
             ("message:3", session_1_id, "buyer", "好的谢谢", now - timedelta(minutes=2)),
             (
                 "message:4",
@@ -269,7 +281,7 @@ def seed_database() -> None:
                 "售后话术/退款话术.md",
                 "file",
                 "售后话术",
-                "# 退款话术\n\n1. 亲，非常抱歉给您带来不好的体验...",
+                "# 退款话术\n\n1. 亲，非常抱歉给您带来不好的体验。",
                 1,
             ),
         )
@@ -291,7 +303,7 @@ def seed_database() -> None:
                 "售后话术/物流话术.md",
                 "file",
                 "售后话术",
-                "# 物流话术\n\n1. 亲，帮您查一下物流信息...",
+                "# 物流话术\n\n1. 亲，帮您查一下物流信息。",
                 2,
             ),
         )
@@ -299,7 +311,7 @@ def seed_database() -> None:
 
 def main() -> None:
     seed_database()
-    print("✅ 种子数据插入完成")
+    print("种子数据插入完成")
 
 
 if __name__ == "__main__":

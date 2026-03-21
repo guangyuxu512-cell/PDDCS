@@ -11,10 +11,13 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 from playwright.async_api import Page
+from sqlalchemy import select
 
 from backend.adapters import BaseAdapter, PddAdapter, SessionInfo
 from backend.ai.llm_client import LlmClient, create_llm_client_from_settings
-from backend.db.database import get_db
+from backend.core.crypto import decrypt
+from backend.db.database import get_sync_session
+from backend.db.orm import EscalationLogTable, ShopTable
 from backend.engines.human_simulator import HumanSimulator
 from backend.engines.playwright_engine import engine
 from backend.services.message_processor import process_buyer_message
@@ -64,11 +67,11 @@ async def _is_shop_context_alive(shop_id: str) -> bool:
 
 
 def _get_shop_platform(shop_id: str) -> str | None:
-    with get_db() as conn:
-        row = conn.execute("SELECT platform FROM shops WHERE id=?", (shop_id,)).fetchone()
+    with get_sync_session() as session:
+        row = session.get(ShopTable, shop_id)
     if row is None:
         return None
-    return str(row["platform"])
+    return str(row.platform)
 
 
 def _load_runtime_configuration(shop_id: str) -> tuple[dict[str, Any], LlmClient]:
@@ -79,12 +82,18 @@ def _load_runtime_configuration(shop_id: str) -> tuple[dict[str, Any], LlmClient
 
 
 def _get_shop_credentials(shop_id: str) -> tuple[str, str]:
-    """从 DB 获取店铺账号密码明文。"""
-    with get_db() as conn:
-        row = conn.execute("SELECT username, password FROM shops WHERE id=?", (shop_id,)).fetchone()
+    with get_sync_session() as session:
+        row = session.get(ShopTable, shop_id)
     if row is None:
         return "", ""
-    return str(row["username"] or "").strip(), str(row["password"] or "")
+
+    password = str(row.password or "")
+    if row.password_encrypted:
+        try:
+            password = decrypt(row.password_encrypted)
+        except ValueError:
+            logger.warning("[%s] Failed to decrypt stored password, falling back to legacy plaintext", shop_id)
+    return str(row.username or "").strip(), password
 
 
 def _get_shop_restart_policy(shop_id: str) -> bool:
@@ -114,20 +123,18 @@ def _get_shop_proxy(shop_id: str) -> str:
 
 
 def _update_escalation_log(session_id: str, shop_id: str, success: bool) -> None:
-    with get_db() as conn:
-        row = conn.execute(
-            """
-            SELECT id
-            FROM escalation_logs
-            WHERE session_id=? AND shop_id=?
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (session_id, shop_id),
-        ).fetchone()
+    with get_sync_session() as session:
+        row = session.scalar(
+            select(EscalationLogTable)
+            .where(
+                EscalationLogTable.session_id == session_id,
+                EscalationLogTable.shop_id == shop_id,
+            )
+            .order_by(EscalationLogTable.created_at.desc())
+        )
         if row is None:
             return
-        conn.execute("UPDATE escalation_logs SET success=? WHERE id=?", (int(success), row["id"]))
+        row.success = success
 
 
 def _update_shop_status(shop_id: str, **kwargs: Any) -> None:
@@ -136,23 +143,22 @@ def _update_shop_status(shop_id: str, **kwargs: Any) -> None:
         return
 
     allowed_fields = {"is_online", "cookie_valid", "last_active_at", "today_served_count"}
-    sets: list[str] = []
-    params: list[Any] = []
-    for key, value in kwargs.items():
-        if key not in allowed_fields:
-            continue
-        sets.append(f"{key}=?")
-        params.append(int(value) if isinstance(value, bool) else value)
+    with get_sync_session() as session:
+        shop = session.get(ShopTable, shop_id)
+        if shop is None:
+            return
 
-    if not sets:
-        return
+        updated = False
+        for key, value in kwargs.items():
+            if key not in allowed_fields:
+                continue
+            setattr(shop, key, value)
+            updated = True
 
-    sets.append("updated_at=?")
-    params.append(datetime.now().isoformat())
-    params.append(shop_id)
+        if not updated:
+            return
 
-    with get_db() as conn:
-        conn.execute(f"UPDATE shops SET {', '.join(sets)} WHERE id=?", params)
+        shop.updated_at = datetime.now().isoformat()
 
 
 def _get_shop_context(shop_id: str) -> Any | None:
@@ -627,12 +633,17 @@ class ShopScheduler:
         return True
 
     async def start_all_online_shops(self) -> int:
-        with get_db() as conn:
-            rows = conn.execute("SELECT id FROM shops WHERE is_online=1 AND ai_enabled=1").fetchall()
+        with get_sync_session() as session:
+            rows = session.scalars(
+                select(ShopTable.id).where(
+                    ShopTable.is_online.is_(True),
+                    ShopTable.ai_enabled.is_(True),
+                )
+            ).all()
 
         tasks: list[Awaitable[bool]] = []
         for row in rows:
-            shop_id = str(row["id"])
+            shop_id = str(row)
             if shop_id not in self._running_tasks or self._running_tasks[shop_id].done():
                 tasks.append(self.start_shop(shop_id))
 

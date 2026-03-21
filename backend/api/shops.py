@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 from typing_extensions import Literal
 
 from backend.api.response import fail, ok
-from backend.db.database import get_db
+from backend.db.database import get_sync_session
+from backend.db.orm import ShopTable
 from backend.engines.playwright_engine import engine
 from backend.services.scheduler import get_running_shops, start_shop, stop_shop
 from backend.services.shop_service import (
@@ -40,12 +41,13 @@ class CreateShopBody(BaseModel):
 
 
 def _set_shop_online_status(shop_id: str, is_online: bool) -> bool:
-    with get_db() as conn:
-        cursor = conn.execute(
-            "UPDATE shops SET is_online=?, updated_at=? WHERE id=?",
-            (int(is_online), datetime.now().isoformat(), shop_id),
-        )
-    return cursor.rowcount > 0
+    with get_sync_session() as session:
+        row = session.get(ShopTable, shop_id)
+        if row is None:
+            return False
+        row.is_online = is_online
+        row.updated_at = datetime.now().isoformat()
+        return True
 
 
 @router.get("/shops")

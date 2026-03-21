@@ -5,10 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from playwright.async_api import BrowserContext, Page
+from sqlalchemy import select
+
+from backend.core.crypto import decrypt, encrypt, fingerprint
+from backend.db.database import get_async_session
+from backend.db.orm import ShopCookieTable, ShopTable
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,31 +35,72 @@ class CookieManager:
     """Saves and restores browser cookies per shop."""
 
     def __init__(self, data_dir: str = "data/cookies") -> None:
-        self._data_dir = Path(data_dir)
-        self._data_dir.mkdir(parents=True, exist_ok=True)
+        self._legacy_data_dir = Path(data_dir)
 
     def _cookie_path(self, shop_id: str) -> Path:
-        return self._data_dir / f"{shop_id}.json"
+        return self._legacy_data_dir / f"{shop_id}.json"
+
+    async def _persist_cookie_payload(self, shop_id: str, payload: str) -> None:
+        now = datetime.now().isoformat()
+        encrypted_payload = encrypt(payload)
+        payload_fingerprint = fingerprint(payload)
+
+        async with get_async_session() as session:
+            shop = await session.get(ShopTable, shop_id)
+            if shop is None:
+                logger.warning("Skip saving cookies for missing shop %s", shop_id)
+                return
+
+            row = await session.get(ShopCookieTable, shop_id)
+            if row is None:
+                row = ShopCookieTable(shop_id=shop_id)
+                session.add(row)
+
+            row.cookie_encrypted = encrypted_payload
+            row.cookie_fingerprint = payload_fingerprint
+            row.updated_at = now
+            shop.cookie_last_refresh = now
 
     async def save(self, shop_id: str, context: BrowserContext) -> None:
         cookies = await _wait(context.cookies())
-        payload = json.dumps(cookies, ensure_ascii=False, indent=2)
-        await _wait(
-            asyncio.to_thread(self._cookie_path(shop_id).write_text, payload, encoding="utf-8"),
-            timeout_seconds=5.0,
-        )
+        payload = json.dumps(cookies, ensure_ascii=False, separators=(",", ":"))
+        await _wait(self._persist_cookie_payload(shop_id, payload), timeout_seconds=5.0)
 
-    async def load(self, shop_id: str, context: BrowserContext) -> bool:
+    async def _load_legacy_file(self, shop_id: str) -> list[dict[str, Any]] | None:
         cookie_path = self._cookie_path(shop_id)
         if not cookie_path.exists():
-            return False
+            return None
 
         try:
             payload = await _wait(asyncio.to_thread(cookie_path.read_text, encoding="utf-8"), timeout_seconds=5.0)
             cookies = json.loads(payload)
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("Failed to read cookie file for shop %s: %s", shop_id, exc)
-            return False
+            logger.warning("Failed to read legacy cookie file for shop %s: %s", shop_id, exc)
+            return None
+
+        if not isinstance(cookies, list):
+            logger.warning("Legacy cookie payload for shop %s is not a list", shop_id)
+            return None
+
+        await self._persist_cookie_payload(shop_id, json.dumps(cookies, ensure_ascii=False, separators=(",", ":")))
+        return cookies
+
+    async def load(self, shop_id: str, context: BrowserContext) -> bool:
+        async with get_async_session() as session:
+            row = await session.get(ShopCookieTable, shop_id)
+
+        cookies: Any = None
+        if row is not None and row.cookie_encrypted:
+            try:
+                cookies = json.loads(decrypt(row.cookie_encrypted))
+            except (ValueError, json.JSONDecodeError) as exc:
+                logger.warning("Failed to decrypt cookie payload for shop %s: %s", shop_id, exc)
+                cookies = None
+
+        if cookies is None:
+            cookies = await self._load_legacy_file(shop_id)
+            if cookies is None:
+                return False
 
         if not isinstance(cookies, list):
             logger.warning("Cookie payload for shop %s is not a list", shop_id)

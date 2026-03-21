@@ -5,18 +5,22 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from backend.db.database import get_db
+from sqlalchemy import select
+
+from backend.db.database import get_sync_session
 from backend.db.models import KnowledgeDocument, KnowledgeTreeNode
+from backend.db.orm import KnowledgeFileTable, orm_object_to_dict
 
 
 def get_tree() -> list[KnowledgeTreeNode]:
-    """查询知识库树并组装层级结构。"""
-    with get_db() as conn:
-        rows = conn.execute("SELECT * FROM knowledge_files ORDER BY sort_order, name").fetchall()
+    with get_sync_session() as session:
+        rows = session.scalars(
+            select(KnowledgeFileTable).order_by(KnowledgeFileTable.sort_order, KnowledgeFileTable.name)
+        ).all()
 
     nodes_by_path: dict[str, dict[str, object]] = {}
     for row in rows:
-        node = dict(row)
+        node = orm_object_to_dict(row)
         node["children"] = [] if node["node_type"] == "folder" else None
         nodes_by_path[str(node["path"])] = node
 
@@ -34,66 +38,67 @@ def get_tree() -> list[KnowledgeTreeNode]:
 
 
 def get_file_list() -> list[str]:
-    """返回知识库文件路径列表。"""
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT path FROM knowledge_files WHERE node_type='file' ORDER BY sort_order, name"
-        ).fetchall()
-    return [str(row["path"]) for row in rows]
+    with get_sync_session() as session:
+        rows = session.scalars(
+            select(KnowledgeFileTable.path)
+            .where(KnowledgeFileTable.node_type == "file")
+            .order_by(KnowledgeFileTable.sort_order, KnowledgeFileTable.name)
+        ).all()
+        return [str(row) for row in rows]
 
 
 def get_document(path: str) -> KnowledgeDocument | None:
-    """查询知识库文档。"""
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT path, content, updated_at FROM knowledge_files WHERE path=? AND node_type='file'",
-            (path,),
-        ).fetchone()
-    return KnowledgeDocument.model_validate(dict(row)) if row is not None else None
+    with get_sync_session() as session:
+        row = session.scalar(
+            select(KnowledgeFileTable).where(
+                KnowledgeFileTable.path == path,
+                KnowledgeFileTable.node_type == "file",
+            )
+        )
+        if row is None:
+            return None
+        return KnowledgeDocument(path=row.path, content=row.content, updated_at=row.updated_at)
 
 
 def save_document(path: str, content: str) -> KnowledgeDocument | None:
-    """保存知识库文档内容。"""
     now = datetime.now().isoformat()
-    with get_db() as conn:
-        cursor = conn.execute(
-            "UPDATE knowledge_files SET content=?, updated_at=? WHERE path=? AND node_type='file'",
-            (content, now, path),
+    with get_sync_session() as session:
+        row = session.scalar(
+            select(KnowledgeFileTable).where(
+                KnowledgeFileTable.path == path,
+                KnowledgeFileTable.node_type == "file",
+            )
         )
-        if cursor.rowcount == 0:
+        if row is None:
             return None
-        row = conn.execute(
-            "SELECT path, content, updated_at FROM knowledge_files WHERE path=? AND node_type='file'",
-            (path,),
-        ).fetchone()
-    return KnowledgeDocument.model_validate(dict(row)) if row is not None else None
+        row.content = content
+        row.updated_at = now
+        session.flush()
+        return KnowledgeDocument(path=row.path, content=row.content, updated_at=row.updated_at)
 
 
 def create_document(parent_path: str, name: str) -> KnowledgeDocument:
-    """创建知识库文档。"""
     now = datetime.now().isoformat()
     path = f"{parent_path}/{name}" if parent_path else name
-    with get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO knowledge_files (
-                id,
-                name,
-                path,
-                node_type,
-                parent_path,
-                content,
-                created_at,
-                updated_at
-            ) VALUES (?,?,?,?,?,?,?,?)
-            """,
-            (str(uuid.uuid4()), name, path, "file", parent_path or None, "", now, now),
+    with get_sync_session() as session:
+        row = KnowledgeFileTable(
+            id=str(uuid.uuid4()),
+            name=name,
+            path=path,
+            node_type="file",
+            parent_path=parent_path or None,
+            content="",
+            created_at=now,
+            updated_at=now,
         )
+        session.add(row)
     return KnowledgeDocument(path=path, content="", updated_at=now)
 
 
 def delete_document(path: str) -> bool:
-    """删除知识库文档。"""
-    with get_db() as conn:
-        cursor = conn.execute("DELETE FROM knowledge_files WHERE path=?", (path,))
-    return cursor.rowcount > 0
+    with get_sync_session() as session:
+        row = session.scalar(select(KnowledgeFileTable).where(KnowledgeFileTable.path == path))
+        if row is None:
+            return False
+        session.delete(row)
+        return True

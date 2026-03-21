@@ -65,7 +65,9 @@ def test_shop_dialog_enhancement_contracts() -> None:
         shop_config_type,
         [
             "username: string;",
-            "password: string;",
+            "hasPassword: boolean;",
+            "cookieFingerprint: string;",
+            "password?: string;",
             "knowledgePaths: string[];",
             "useGlobalKnowledge: boolean;",
         ],
@@ -130,7 +132,8 @@ def test_shop_dialog_enhancement_contracts() -> None:
         shop_config_mock,
         [
             "username:",
-            "password:",
+            "hasPassword:",
+            "cookieFingerprint:",
             "knowledgePaths:",
             "useGlobalKnowledge:",
         ],

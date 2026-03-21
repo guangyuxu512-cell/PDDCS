@@ -30,7 +30,7 @@ def test_seed_module_inserts_expected_records(isolated_database: Path, capsys: p
     runpy.run_module("backend.db.seed", run_name="__main__")
     output = capsys.readouterr().out
 
-    assert "✅ 种子数据插入完成" in output
+    assert "种子数据插入完成" in output
 
     with closing(database.get_connection()) as conn:
         shops = conn.execute("SELECT * FROM shops ORDER BY name").fetchall()
@@ -46,6 +46,9 @@ def test_seed_module_inserts_expected_records(isolated_database: Path, capsys: p
     assert len(shops) == 2
     assert shops[0]["name"] == "测试抖店"
     assert shops[1]["name"] == "测试拼多多店铺"
+    assert shops[1]["password"] == ""
+    assert shops[1]["password_encrypted"] != ""
+    assert shops[1]["password_hash"] != ""
     assert shops[1]["is_online"] == 1
     assert shops[1]["ai_enabled"] == 1
     assert shops[1]["cookie_valid"] == 1
@@ -56,7 +59,7 @@ def test_seed_module_inserts_expected_records(isolated_database: Path, capsys: p
     config_by_human = {row["human_agent_name"]: row for row in configs}
     assert json.loads(config_by_human["客服小王"]["knowledge_paths"]) == ["退款话术.md"]
     assert json.loads(config_by_human["客服小王"]["escalation_rules"]) == [
-        {"id": "r1", "type": "keyword", "value": "退款,投诉"}
+        {"id": "r1", "type": "keyword", "value": "退款|投诉"}
     ]
     assert config_by_human["客服小王"]["use_global_knowledge"] == 1
     assert any(row["human_agent_name"] == "" for row in configs)
@@ -68,7 +71,7 @@ def test_seed_module_inserts_expected_records(isolated_database: Path, capsys: p
     ]
     assert [(row["sender"], row["content"]) for row in messages] == [
         ("buyer", "你好，我买的东西还没发货"),
-        ("ai", "亲，帮您查一下订单状态，请稍等~"),
+        ("ai", "亲，帮您查一下订单状态，请稍等"),
         ("buyer", "好的谢谢"),
         ("ai", "亲，您的订单已经发出，预计明天到达哦~"),
     ]

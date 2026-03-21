@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.db import database
 from backend.engines import human_simulator as human_simulator_module
 from backend.engines.cookie_manager import CookieManager
 from backend.engines.human_simulator import HumanSimulator
@@ -165,6 +166,19 @@ class FakeCookieManager:
         self.saved.append((shop_id, context))
 
 
+def _prepare_cookie_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_dir = tmp_path / "data"
+    db_path = db_dir / "cookies.db"
+    monkeypatch.setattr(database, "DB_DIR", db_dir)
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    database.init_database()
+    with database.get_db() as conn:
+        conn.execute(
+            "INSERT INTO shops (id, name, platform, username, password) VALUES (?,?,?,?,?)",
+            ("shop-1", "测试店铺", "pdd", "seller", ""),
+        )
+
+
 def test_profile_factory_create_list_delete(tmp_path: Path) -> None:
     factory = ProfileFactory(base_dir=str(tmp_path / "profiles"))
 
@@ -177,23 +191,37 @@ def test_profile_factory_create_list_delete(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cookie_manager_save_and_load_roundtrip(tmp_path: Path) -> None:
+async def test_cookie_manager_save_and_load_roundtrip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepare_cookie_database(tmp_path, monkeypatch)
     manager = CookieManager(data_dir=str(tmp_path))
     source_context = FakeCookieContext()
     target_context = FakeCookieContext(cookies=[])
 
     await manager.save("shop-1", source_context)
-    saved_payload = json.loads((tmp_path / "shop-1.json").read_text(encoding="utf-8"))
+    with database.get_db() as conn:
+        saved_row = conn.execute(
+            "SELECT cookie_encrypted, cookie_fingerprint FROM shop_cookies WHERE shop_id=?",
+            ("shop-1",),
+        ).fetchone()
 
     loaded = await manager.load("shop-1", target_context)
 
-    assert saved_payload == [{"name": "sid", "value": "cookie"}]
+    assert saved_row is not None
+    assert saved_row["cookie_encrypted"] != json.dumps([{"name": "sid", "value": "cookie"}], ensure_ascii=False)
+    assert saved_row["cookie_fingerprint"]
     assert loaded is True
     assert target_context.loaded_cookies == [{"name": "sid", "value": "cookie"}]
 
 
 @pytest.mark.asyncio
-async def test_cookie_manager_load_and_validate_cover_failure_paths(tmp_path: Path) -> None:
+async def test_cookie_manager_load_and_validate_cover_failure_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepare_cookie_database(tmp_path, monkeypatch)
     manager = CookieManager(data_dir=str(tmp_path))
     (tmp_path / "shop-1.json").write_text("{bad json", encoding="utf-8")
 
