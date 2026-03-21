@@ -92,7 +92,7 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 
 import {
   createShop,
@@ -110,6 +110,7 @@ import { platformLabel, type Platform, type Shop } from '@/types/shop';
 import type { ShopConfig } from '@/types/shopConfig';
 
 const platformOrder: Platform[] = ['pdd', 'douyin', 'qianniu'];
+const SHOP_STATUS_POLL_INTERVAL_MS = 5000;
 
 const loading = ref(true);
 const creatingShop = ref(false);
@@ -119,6 +120,7 @@ const shops = ref<Shop[]>([]);
 const createDialogVisible = ref(false);
 const dialogVisible = ref(false);
 const selectedShopId = ref<string | null>(null);
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 const createForm = reactive({
   name: '',
   username: '',
@@ -139,6 +141,20 @@ const shopCountByPlatform = computed<Record<Platform, number>>(() => ({
 
 onMounted(async () => {
   await loadShops();
+  pollTimer = setInterval(async () => {
+    try {
+      shops.value = await fetchShopList();
+    } catch {
+      // 静默忽略轮询刷新失败，避免对用户造成持续打扰。
+    }
+  }, SHOP_STATUS_POLL_INTERVAL_MS);
+});
+
+onUnmounted(() => {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 });
 
 async function loadShops(): Promise<void> {

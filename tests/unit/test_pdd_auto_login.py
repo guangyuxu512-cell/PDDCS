@@ -235,7 +235,7 @@ class TestNavigateToChatWithLogin:
                 await adapter.navigate_to_chat(username="user", password="pass")
 
         mock_login.assert_awaited_once_with("user", "pass")
-        assert page.goto.await_args_list[0].args[0] == PDD_LOGIN_URL
+        assert page.goto.await_args_list[0].args[0] == PDD_CHAT_URL
 
     @pytest.mark.asyncio
     async def test_no_credentials_does_not_auto_login(self) -> None:

@@ -44,6 +44,30 @@
                 <span>上次刷新时间：{{ cookieLastRefreshText }}</span>
               </div>
             </div>
+            <div class="shop-edit-dialog__field">
+              <span>自动重启</span>
+              <div>
+                <el-switch
+                  v-model="formState.autoRestart"
+                  inline-prompt
+                  active-text="开"
+                  inactive-text="关"
+                />
+                <div class="shop-edit-dialog__field-note">浏览器关闭后自动重新打开并登录</div>
+              </div>
+            </div>
+            <div class="shop-edit-dialog__field">
+              <span>强制在线</span>
+              <div>
+                <el-switch
+                  v-model="formState.forceOnline"
+                  inline-prompt
+                  active-text="开"
+                  inactive-text="关"
+                />
+                <div class="shop-edit-dialog__field-note">定时检测客服在线状态并自动切回</div>
+              </div>
+            </div>
           </div>
         </el-collapse-item>
 
@@ -277,6 +301,8 @@ function createEmptyConfig(): ShopConfig {
     humanAgentName: '',
     escalationRules: [],
     escalationFallbackMsg: '',
+    autoRestart: false,
+    forceOnline: false,
   };
 }
 
@@ -290,6 +316,8 @@ function normalizeConfig(config: ShopConfig): ShopConfig {
     replyStyleNote: config.replyStyleNote ?? '',
     knowledgePaths: config.knowledgePaths ?? [],
     useGlobalKnowledge: config.useGlobalKnowledge ?? true,
+    autoRestart: config.autoRestart ?? false,
+    forceOnline: config.forceOnline ?? false,
     escalationRules: config.escalationRules.length ? config.escalationRules : [createRule()],
   };
 }
@@ -391,6 +419,8 @@ function normalizeSavePayload(config: ShopConfig): ShopConfig {
       value: rule.value.trim(),
     })),
     escalationFallbackMsg: config.escalationFallbackMsg.trim(),
+    autoRestart: config.autoRestart,
+    forceOnline: config.forceOnline,
   };
 }
 </script>
@@ -420,6 +450,12 @@ function normalizeSavePayload(config: ShopConfig): ShopConfig {
 .shop-edit-dialog__field span {
   color: #607289;
   font-size: 14px;
+}
+
+.shop-edit-dialog__field-note {
+  margin-top: 4px;
+  color: #8e9bb3;
+  font-size: 12px;
 }
 
 .shop-edit-dialog__field--full {

@@ -239,22 +239,20 @@ class PddAdapter(BaseAdapter):
         return "login" in url or "passport" in url
 
     async def navigate_to_chat(self, username: str = "", password: str = "") -> None:
-        """导航到拼多多客服聊天页，如有需要则自动登录。"""
+        """导航到拼多多客服聊天页，Cookie 优先，失效后再走账号密码登录。"""
         if "mms.pinduoduo.com/chat-merchant" in self._page.url and await self.is_logged_in():
             logger.info("[%s] Already on PDD chat page and logged in", self._shop_id)
             self._chat_frame = await self._find_chat_frame()
             return
 
-        is_on_login_page = await self._is_on_login_page()
-        target_url = PDD_LOGIN_URL if (username and password and not is_on_login_page) else PDD_CHAT_URL
-        logger.info("[%s] Navigating to %s", self._shop_id, target_url)
+        logger.info("[%s] Trying cookie-based login: navigating to %s", self._shop_id, PDD_CHAT_URL)
         try:
             await _wait(
-                self._page.goto(target_url, wait_until="domcontentloaded", timeout=30000),
+                self._page.goto(PDD_CHAT_URL, wait_until="domcontentloaded", timeout=30000),
                 timeout_seconds=35.0,
             )
         except Exception as exc:
-            logger.warning("[%s] Navigation to %s failed: %s", self._shop_id, target_url, exc)
+            logger.warning("[%s] Navigation to chat URL failed: %s", self._shop_id, exc)
 
         try:
             await _wait(
@@ -265,8 +263,22 @@ class PddAdapter(BaseAdapter):
             pass
         await _wait(self._page.wait_for_timeout(2000), timeout_seconds=4.0)
 
+        if not await self._is_on_login_page():
+            if await self.is_logged_in():
+                logger.info("[%s] Cookie login successful!", self._shop_id)
+                try:
+                    await self._wait_for_selector("session_list", timeout_ms=15000)
+                except (PlaywrightTimeoutError, TimeoutError):
+                    logger.warning("[%s] Session list not found after cookie login", self._shop_id)
+                await self.dismiss_popups()
+                self._chat_frame = await self._find_chat_frame()
+                return
+
+            logger.info("[%s] On chat page but not fully logged in, will try credentials", self._shop_id)
+
         if await self._is_on_login_page():
             if username and password:
+                logger.info("[%s] Cookie expired, falling back to username/password login", self._shop_id)
                 login_ok = await self.auto_login(username, password)
                 if login_ok:
                     if "chat-merchant" not in self._page.url.lower():

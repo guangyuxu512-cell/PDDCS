@@ -26,4 +26,6 @@ export interface ShopConfig {
   humanAgentName: string;
   escalationRules: EscalationRule[];
   escalationFallbackMsg: string;
+  autoRestart: boolean;
+  forceOnline: boolean;
 }

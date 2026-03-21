@@ -27,6 +27,8 @@ let shopConfigs: Record<string, ShopConfig> = {
       { id: 'rule-pdd-002', type: 'repeat_ask', value: '3' },
     ],
     escalationFallbackMsg: '亲，已为您转接人工客服，请稍等~',
+    autoRestart: false,
+    forceOnline: true,
   },
   'shop-pdd-002': {
     shopId: 'shop-pdd-002',
@@ -46,6 +48,8 @@ let shopConfigs: Record<string, ShopConfig> = {
     humanAgentName: '百货人工客服',
     escalationRules: [{ id: 'rule-pdd-003', type: 'order_amount', value: '500' }],
     escalationFallbackMsg: '亲，当前问题已转接人工处理，请稍等。',
+    autoRestart: true,
+    forceOnline: false,
   },
   'shop-dy-001': {
     shopId: 'shop-dy-001',
@@ -63,6 +67,8 @@ let shopConfigs: Record<string, ShopConfig> = {
     humanAgentName: '抖店售后组',
     escalationRules: [{ id: 'rule-dy-001', type: 'regex', value: '退.*赔偿' }],
     escalationFallbackMsg: '您好，已为您转接人工客服，请稍后。',
+    autoRestart: false,
+    forceOnline: false,
   },
   'shop-dy-002': {
     shopId: 'shop-dy-002',
@@ -82,6 +88,8 @@ let shopConfigs: Record<string, ShopConfig> = {
     humanAgentName: '美妆顾问',
     escalationRules: [{ id: 'rule-dy-002', type: 'keyword', value: '过敏' }],
     escalationFallbackMsg: '您好，当前问题需要人工协助，已经为您转接。',
+    autoRestart: true,
+    forceOnline: true,
   },
   'shop-qn-001': {
     shopId: 'shop-qn-001',
@@ -99,6 +107,8 @@ let shopConfigs: Record<string, ShopConfig> = {
     humanAgentName: '家居人工一组',
     escalationRules: [{ id: 'rule-qn-001', type: 'repeat_ask', value: '2' }],
     escalationFallbackMsg: '亲，已为您联系人工客服，请稍等片刻。',
+    autoRestart: false,
+    forceOnline: false,
   },
   'shop-qn-002': {
     shopId: 'shop-qn-002',
@@ -116,6 +126,8 @@ let shopConfigs: Record<string, ShopConfig> = {
     humanAgentName: '食品人工客服',
     escalationRules: [{ id: 'rule-qn-002', type: 'keyword', value: '临期' }],
     escalationFallbackMsg: '亲，已为您转接人工客服协助处理。',
+    autoRestart: true,
+    forceOnline: true,
   },
   'shop-qn-003': {
     shopId: 'shop-qn-003',
@@ -135,6 +147,8 @@ let shopConfigs: Record<string, ShopConfig> = {
     humanAgentName: '母婴人工客服',
     escalationRules: [{ id: 'rule-qn-003', type: 'keyword', value: '宝宝不适' }],
     escalationFallbackMsg: '亲，已为您转接人工客服，请稍等回复。',
+    autoRestart: false,
+    forceOnline: true,
   },
 };
 
