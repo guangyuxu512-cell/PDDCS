@@ -201,18 +201,48 @@ class ShopScheduler:
         if current is task:
             self._running_tasks.pop(shop_id, None)
 
+        was_cancelled = False
         try:
             task.result()
         except asyncio.CancelledError:
+            was_cancelled = True
             logger.info("[%s] Shop task cancelled", shop_id)
         except Exception:
             logger.exception("[%s] Shop task crashed", shop_id)
 
         try:
+            if not was_cancelled and _get_shop_restart_policy(shop_id):
+                _update_shop_status(shop_id, is_online=False)
+                logger.info("[%s] auto_restart=ON, scheduling restart in 10 seconds", shop_id)
+                asyncio.get_event_loop().call_later(
+                    10.0,
+                    lambda: asyncio.create_task(self._auto_restart_shop(shop_id)),
+                )
+                return
+
             _update_shop_status(shop_id, is_online=False)
             logger.info("[%s] DB status set to offline after task completion", shop_id)
         except Exception:
             logger.exception("[%s] Failed to update DB status in _on_task_done", shop_id)
+
+    async def _auto_restart_shop(self, shop_id: str) -> None:
+        try:
+            if not _get_shop_restart_policy(shop_id):
+                logger.info("[%s] auto_restart is disabled, skipping scheduled restart", shop_id)
+                return
+
+            running_task = self._running_tasks.get(shop_id)
+            if running_task is not None and not running_task.done():
+                logger.info("[%s] Shop task already running, skipping scheduled restart", shop_id)
+                return
+
+            started = await self.start_shop(shop_id)
+            if started:
+                logger.info("[%s] Scheduled auto restart triggered successfully", shop_id)
+            else:
+                logger.warning("[%s] Scheduled auto restart did not start a new task", shop_id)
+        except Exception:
+            logger.exception("[%s] Scheduled auto restart failed", shop_id)
 
     async def _is_adapter_logged_in(self, adapter: BaseAdapter) -> bool:
         checker = getattr(adapter, "is_logged_in", None)
@@ -526,13 +556,15 @@ class ShopScheduler:
 
                     try:
                         proxy = _get_shop_proxy(shop_id)
+                        logger.info("[%s] Crash recovery: restarting browser...", shop_id)
                         await _wait(
                             engine.restart_shop(shop_id, proxy=proxy),
                             timeout_seconds=DEFAULT_ENGINE_TIMEOUT_SECONDS,
                         )
+                        logger.info("[%s] Crash recovery: browser restarted OK", shop_id)
                     except Exception:
                         logger.exception("[%s] Restart failed", shop_id)
-                    await _sleep(5.0)
+                    await _sleep(8.0)
         except asyncio.CancelledError:
             logger.info("[%s] Shop loop cancelled", shop_id)
             raise

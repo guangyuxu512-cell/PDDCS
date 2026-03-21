@@ -209,7 +209,7 @@ async def test_restart_shop_reopens_after_close_and_close_shop_swallows_failures
 
     assert old_context.closed is True
     assert cookie_manager.saved == [("shop-1", old_context)]
-    assert sleep_calls == [2.0]
+    assert sleep_calls == [5.0]
     assert restarted_page is new_context.pages[0]
     assert engine._contexts["shop-1"] is new_context
     assert len(chromium.calls) == 1

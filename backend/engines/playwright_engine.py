@@ -238,7 +238,7 @@ class PlaywrightEngine:
             self._contexts.pop(shop_id, None)
             self._shop_start_times.pop(shop_id, None)
 
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(5.0)
         return await self.open_shop(shop_id, proxy=proxy)
 
     async def close_shop(self, shop_id: str) -> None:
